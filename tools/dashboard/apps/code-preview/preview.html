@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Graphite Kinetic Wireframe</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;700;900&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0d0d0d;
+            --graphite-900: #1a1a1a;
+            --graphite-700: #333333;
+            --graphite-400: #7a7a7a;
+            --lead: #d1d1d1;
+            --accent: #ffffff;
+            --grid-size: 40px;
+            --stroke-width: 1px;
+            --transition-soft: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            cursor: crosshair;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--lead);
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Graphite Texture Overlay */
+        .texture-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 9999;
+            opacity: 0.04;
+            background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3ExternalLink %3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+        }
+
+        /* Blueprint Grid */
+        .grid-canvas {
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(to right, var(--graphite-900) 1px, transparent 1px),
+                linear-gradient(to bottom, var(--graphite-900) 1px, transparent 1px);
+            background-size: var(--grid-size) var(--grid-size);
+            z-index: -1;
+        }
+
+        /* Kinetic UI Components */
+        header {
+            padding: 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            border-bottom: var(--stroke-width) solid var(--graphite-700);
+            animation: slideDown 0.8s ease-out forwards;
+        }
+
+        .brand {
+            font-size: 0.75rem;
+            font-weight: 900;
+            letter-spacing: 0.4em;
+            text-transform: uppercase;
+            color: var(--accent);
+        }
+
+        .stats {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--graphite-400);
+            display: flex;
+            gap: 20px;
+        }
+
+        main {
+            display: grid;
+            grid-template-columns: 350px 1fr 400px;
+            flex-grow: 1;
+            overflow: hidden;
+        }
+
+        /* Panels */
+        .panel {
+            border-right: var(--stroke-width) solid var(--graphite-700);
+            position: relative;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            animation: fadeIn 1s ease-out forwards;
+        }
+
+        .panel-title {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .panel-title::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            border: 1px solid var(--accent);
+            display: inline-block;
+        }
+
+        /* Snippet List */
+        .snippet-item {
+            padding: 15px;
+            border: 1px solid transparent;
+            margin-bottom: 10px;
+            transition: var(--transition-soft);
+            position: relative;
+        }
+
+        .snippet-item:hover {
+            border-color: var(--graphite-400);
+            transform: translateX(10px);
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .snippet-item h3 {
+            font-size: 14px;
+            font-weight: 400;
+            color: var(--lead);
+        }
+
+        .snippet-item span {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--graphite-400);
+        }
+
+        /* Editor Section */
+        .editor-container {
+            padding: 40px;
+            background: #080808;
+            position: relative;
+        }
+
+        .editor-container::after {
+            content: "L1. [UTF-8] : WIREFRAME_MODE";
+            position: absolute;
+            bottom: 20px;
+            right: 40px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--graphite-700);
+        }
+
+        code {
+            font-family: 'JetBrains Mono', monospace;
+            line-height: 1.8;
+            font-size: 14px;
+            display: block;
+            color: var(--graphite-400);
+        }
+
+        .keyword {
+            color: var(--accent);
+            font-weight: 700;
+        }
+
+        .string {
+            color: #666;
+        }
+
+        /* Preview Window - The Kinetic Heart */
+        .preview-pane {
+            background: #111;
+            margin: 20px;
+            border: 1px solid var(--graphite-700);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 20px 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        .preview-canvas {
+            width: 80%;
+            height: 60%;
+            border: 1px dashed var(--graphite-400);
+            position: relative;
+            transition: var(--transition-soft);
+        }
+
+        .preview-pane:hover .preview-canvas {
+            transform: scale(1.05) rotateX(5deg) rotateY(-5deg);
+            border-color: var(--accent);
+        }
+
+        /* Corner Markers */
+        .marker {
+            position: absolute;
+            width: 15px;
+            height: 15px;
+            border-color: var(--graphite-400);
+            border-style: solid;
+        }
+
+        .top-left {
+            top: -5px;
+            left: -5px;
+            border-width: 1px 0 0 1px;
+        }
+
+        .top-right {
+            top: -5px;
+            right: -5px;
+            border-width: 1px 1px 0 0;
+        }
+
+        .bot-left {
+            bottom: -5px;
+            left: -5px;
+            border-width: 0 0 1px 1px;
+        }
+
+        .bot-right {
+            bottom: -5px;
+            right: -5px;
+            border-width: 0 1px 1px 0;
+        }
+
+        /* Animations */
+        @keyframes slideDown {
+            from {
+                transform: translateY(-100%);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--graphite-700);
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--lead);
+        }
+
+        .floating-action {
+            position: fixed;
+            bottom: 40px;
+            right: 40px;
+            width: 60px;
+            height: 60px;
+            background: var(--accent);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--bg);
+            font-size: 24px;
+            border-radius: 0;
+            mix-blend-mode: screen;
+            transition: var(--transition-soft);
+        }
+
+        .floating-action:hover {
+            transform: rotate(90deg) scale(1.1);
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="texture-overlay"></div>
+    <div class="grid-canvas"></div>
+
+    <header>
+        <div class="brand-container">
+            <div class="brand">Graphite Core v0.9</div>
+            <div style="font-size: 32px; font-weight: 300; margin-top: 10px;">Kinetic_Manager</div>
+        </div>
+        <div class="stats">
+            <div>OBJECTS: 124</div>
+            <div>RENDER_TIME: 14ms</div>
+            <div>COORD: 40.7128° N</div>
+        </div>
+    </header>
+
+    <main>
+        <!-- Library Panel -->
+        <section class="panel">
+            <div class="panel-title">Repository</div>
+            <div class="snippet-item">
+                <span>001 // CSS</span>
+                <h3>Fluid_Physics_Grid.css</h3>
+            </div>
+            <div class="snippet-item">
+                <span>002 // JS</span>
+                <h3>Vector_Collision_V2.js</h3>
+            </div>
+            <div class="snippet-item">
+                <span>003 // HTML</span>
+                <h3>Skeleton_Wireframe.html</h3>
+            </div>
+            <div class="snippet-item">
+                <span>004 // GLSL</span>
+                <h3>Noise_Grain_Filter.frag</h3>
+            </div>
+        </section>
+
+        <!-- Editor Panel -->
+        <section class="panel editor-container">
+            <div class="panel-title">Source_Input</div>
+            <pre><code><span class="keyword">function</span> <span class="keyword">init</span>() {
+  <span class="keyword">const</span> graphite = <span class="string">'pure_carbon'</span>;
+  <span class="keyword">return</span> {
+    material: graphite,
+    opacity: 0.85,
+    kinetic: <span class="keyword">true</span>,
+    render: (ctx) => {
+       <span class="comment">// Drawing the grid geometry</span>
+       ctx.strokeWeight(1);
+       ctx.beginPath();
+    }
+  };
+}</code></pre>
+        </section>
+
+        <!-- Preview Panel -->
+        <section class="preview-pane">
+            <div class="marker top-left"></div>
+            <div class="marker top-right"></div>
+            <div class="marker bot-left"></div>
+            <div class="marker bot-right"></div>
+
+            <div class="preview-canvas" id="canvas">
+                <div
+                    style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center;">
+                    <div
+                        style="width: 100px; height: 100px; border: 1px solid white; margin: 0 auto; animation: spin 4s linear infinite;">
+                    </div>
+                    <p
+                        style="margin-top: 20px; font-family: 'JetBrains Mono'; font-size: 10px; color: var(--graphite-400);">
+                        REALTIME_VIEWPORT</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div class="floating-action">+</div>
+
+    <style>
+        @keyframes spin {
+            0% {
+                transform: translate(-50%, -50%) rotate(0deg);
+            }
+
+            100% {
+                transform: translate(-50%, -50%) rotate(360deg);
+            }
+        }
+    </style>
+
+    <script>
+        // Kinetic Mouse tracking for the preview window
+        const pane = document.querySelector('.preview-pane');
+        const canvas = document.querySelector('.preview-canvas');
+
+        pane.addEventListener('mousemove', (e) => {
+            const rect = pane.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            const centerX = rect.width / 2;
+            const centerY = rect.height / 2;
+
+            const rotateX = (y - centerY) / 10;
+            const rotateY = (centerX - x) / 10;
+
+            canvas.style.transform = `scale(1.05) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
+        });
+
+        pane.addEventListener('mouseleave', () => {
+            canvas.style.transform = `scale(1) rotateX(0deg) rotateY(0deg)`;
+        });
+
+        // Staggered entry for items
+        document.querySelectorAll('.snippet-item').forEach((item, index) => {
+            item.style.opacity = '0';
+            item.style.transform = 'translateX(-20px)';
+            setTimeout(() => {
+                item.style.transition = 'all 0.6s cubic-bezier(0.16, 1, 0.3, 1)';
+                item.style.opacity = '1';
+                item.style.transform = 'translateX(0)';
+            }, 200 + (index * 100));
+        });
+    </script>
+</body>
+
+</html>

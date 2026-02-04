@@ -1,0 +1,3 @@
+@echo off
+echo Starting Code Preview independently...
+npx -y serve "%~dp0apps/code-preview"

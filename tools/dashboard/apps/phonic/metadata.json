@@ -1,0 +1,8 @@
+{
+  "name": "PHONIC | Spectral Demo Vault",
+  "description": "A vitreous, high-fidelity platform for organizing and sharing music demos, featuring chromatic refraction aesthetics and integrated lyric editing.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

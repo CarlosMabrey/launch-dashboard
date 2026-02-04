@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Launch</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <style>
+        /* ============================================
+           CSS HOUDINI - Color Property Definitions
+           Enables smooth color interpolation 
+           ============================================ */
+        @property --aura-1 {
+            syntax: '<color>';
+            initial-value: #1a0a2e;
+            inherits: true;
+        }
+
+        @property --aura-2 {
+            syntax: '<color>';
+            initial-value: #16213e;
+            inherits: true;
+        }
+
+        @property --aura-3 {
+            syntax: '<color>';
+            initial-value: #0f3460;
+            inherits: true;
+        }
+
+        @property --aura-4 {
+            syntax: '<color>';
+            initial-value: #533483;
+            inherits: true;
+        }
+
+        @property --aura-5 {
+            syntax: '<color>';
+            initial-value: #0b1220;
+            inherits: true;
+        }
+
+        @property --aura-6 {
+            syntax: '<color>';
+            initial-value: #2a0b3d;
+            inherits: true;
+        }
+
+        :root {
+            /* Default dark moody palette */
+            --aura-1: #1a0a2e;
+            --aura-2: #16213e;
+            --aura-3: #0f3460;
+            --aura-4: #533483;
+            --aura-5: #0b1220;
+            --aura-6: #2a0b3d;
+
+            /* Aura transition timing */
+            transition: --aura-1 3s ease-in-out,
+                --aura-2 3s ease-in-out,
+                --aura-3 3s ease-in-out,
+                --aura-4 3s ease-in-out,
+                --aura-5 3s ease-in-out,
+                --aura-6 3s ease-in-out;
+        }
+
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #030308;
+            margin: 0;
+            overflow-x: hidden;
+            letter-spacing: -0.01em;
+        }
+
+        /* ============================================
+           AURA BACKGROUND SYSTEM
+           Layered radial gradients with parallax
+           ============================================ */
+        .aura-container {
+            position: fixed;
+            inset: 0;
+            z-index: -10;
+            overflow: hidden;
+            background: #030308;
+        }
+
+        .aura-layer {
+            position: absolute;
+            width: 220%;
+            height: 220%;
+            top: -60%;
+            left: -60%;
+            background:
+                radial-gradient(ellipse 80% 50% at 20% 30%, var(--aura-1) 0%, transparent 50%),
+                radial-gradient(ellipse 60% 70% at 80% 20%, var(--aura-2) 0%, transparent 45%),
+                radial-gradient(ellipse 70% 60% at 70% 80%, var(--aura-3) 0%, transparent 50%),
+                radial-gradient(ellipse 50% 80% at 30% 70%, var(--aura-4) 0%, transparent 45%),
+                radial-gradient(ellipse 55% 60% at 10% 85%, var(--aura-5) 0%, transparent 48%),
+                radial-gradient(ellipse 65% 55% at 92% 58%, var(--aura-6) 0%, transparent 46%);
+            background-blend-mode: screen;
+            filter: blur(220px) saturate(1.8);
+            opacity: 0.85;
+            animation: breathe 8s ease-in-out infinite alternate;
+            will-change: transform, filter;
+        }
+
+        .aura-layer-secondary {
+            position: absolute;
+            width: 220%;
+            height: 220%;
+            top: -60%;
+            left: -60%;
+            background:
+                radial-gradient(ellipse 50% 60% at 60% 40%, var(--aura-3) 0%, transparent 40%),
+                radial-gradient(ellipse 70% 50% at 25% 60%, var(--aura-1) 0%, transparent 45%),
+                radial-gradient(ellipse 60% 70% at 85% 75%, var(--aura-4) 0%, transparent 50%),
+                radial-gradient(ellipse 80% 40% at 40% 15%, var(--aura-2) 0%, transparent 40%),
+                radial-gradient(ellipse 65% 45% at 15% 20%, var(--aura-6) 0%, transparent 42%),
+                radial-gradient(ellipse 55% 70% at 75% 10%, var(--aura-5) 0%, transparent 45%);
+            background-blend-mode: screen;
+            filter: blur(280px) saturate(2.2);
+            opacity: 0.6;
+            animation: breathe 12s ease-in-out infinite alternate-reverse;
+            will-change: transform, filter;
+        }
+
+        /* Breathing animation for organic feel */
+        @keyframes breathe {
+            0% {
+                transform: scale(1) rotate(0deg);
+                filter: blur(220px) saturate(1.8);
+            }
+
+            50% {
+                filter: blur(240px) saturate(2.0);
+            }
+
+            100% {
+                transform: scale(1.05) rotate(2deg);
+                filter: blur(260px) saturate(1.6);
+            }
+        }
+
+        /* Gradient flow animation for sidebar edge */
+        @keyframes gradientFlow {
+            0% {
+                background-position: 0% 0%;
+            }
+            100% {
+                background-position: 0% 100%;
+            }
+        }
+
+        /* Anti-banding noise overlay (dithering) */
+        .aura-noise {
+            position: absolute;
+            inset: 0;
+            opacity: 0.025;
+            pointer-events: none;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+        }
+
+        /* Vignette for depth */
+        .aura-vignette {
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(ellipse at center, transparent 40%, rgba(3, 3, 8, 0.7) 100%);
+            pointer-events: none;
+        }
+
+        @keyframes drift {
+            from {
+                transform: scale(1) translate(0%, 0%);
+            }
+
+            to {
+                transform: scale(1.1) translate(2%, 2%);
+            }
+        }
+
+        .animate-subtle-drift {
+            animation: drift 30s infinite alternate ease-in-out;
+        }
+
+        @keyframes onyxMove {
+            from {
+                transform: translate(-10%, -10%);
+            }
+
+            to {
+                transform: translate(10%, 10%);
+            }
+        }
+
+        /* Custom scrollbar for better aesthetics */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(24px) saturate(180%);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        /* Sidebar-specific animations */
+        @keyframes slide-in-from-left {
+            from {
+                transform: translateX(-100%);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes fade-in {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+
+        @keyframes slide-in-from-left-4 {
+            from {
+                transform: translateX(-16px);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .animate-in {
+            animation-duration: 300ms;
+            animation-fill-mode: both;
+        }
+
+        .fade-in {
+            animation-name: fade-in;
+        }
+
+        .slide-in-from-left-4 {
+            animation-name: slide-in-from-left-4;
+        }
+
+        /* Custom scrollbar for sidebar */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 3px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        /* Gel Blob Animations */
+        @keyframes morph {
+            0% {
+                border-radius: 32% 68% 45% 55% / 40% 35% 65% 60%;
+            }
+
+            33% {
+                border-radius: 55% 45% 68% 32% / 60% 65% 35% 40%;
+            }
+
+            66% {
+                border-radius: 45% 55% 32% 68% / 35% 40% 60% 65%;
+            }
+
+            100% {
+                border-radius: 32% 68% 45% 55% / 40% 35% 65% 60%;
+            }
+        }
+
+        @keyframes gradientShift {
+            0% {
+                background-position: 0% 50%;
+            }
+
+            100% {
+                background-position: 100% 50%;
+            }
+        }
+
+        .gel-blob {
+            animation: morph 6s infinite ease-in-out, gradientShift 4s infinite alternate;
+        }
+
+        .gel-blob:hover {
+            border-radius: 35% !important;
+            filter: brightness(1.2) saturate(1.4);
+        }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        neonPink: '#ff00ff',
+                        neonGreen: '#00ffaa',
+                        neonBlue: '#00d4ff',
+                        bgDark: '#050505',
+                    },
+                    boxShadow: {
+                        'premium': '0 20px 40px rgba(0,0,0,0.4), inset 0 1px 1px rgba(255,255,255,0.1)',
+                        'premium-hover': '0 40px 80px rgba(0,0,0,0.6), inset 0 1px 2px rgba(255,255,255,0.2)',
+                    },
+                    borderRadius: {
+                        '3xl': '24px',
+                        '4xl': '32px',
+                    },
+                    transitionTimingFunction: {
+                        'jelly': 'cubic-bezier(0.3, 1.65, 0.5, 1)',
+                    }
+                }
+            }
+        }
+    </script>
+    <script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.36.0"
+  }
+}
+</script>
+    <link rel="stylesheet" href="/index.css">
+</head>
+
+<body class="text-white selection:bg-neonBlue/30 selection:text-white">
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+</body>
+
+</html>

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Preview - Graphite Core</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;700;900&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="texture-overlay"></div>
+    <div class="grid-canvas"></div>
+
+    <header>
+        <div class="brand-container">
+            <div class="brand">Graphite Core v0.9</div>
+            <div style="font-size: 32px; font-weight: 300; margin-top: 10px;">Kinetic_Manager</div>
+        </div>
+        <div class="stats">
+            <div id="repo-count">OBJECTS: 0</div>
+            <div>RENDER_TIME: 14ms</div>
+            <div>STATUS: READY</div>
+        </div>
+    </header>
+
+    <main>
+        <!-- Library Panel -->
+        <section class="panel" id="repository-panel">
+            <div class="panel-title">
+                <span>Repository</span>
+                <button id="toggle-sidebar" class="icon-btn" title="Toggle Sidebar">_</button>
+            </div>
+            <div id="snippet-list" class="scroll-container">
+                <!-- Snippets will be injected here -->
+            </div>
+        </section>
+
+        <!-- Editor Panel -->
+        <section class="panel editor-container">
+            <div class="panel-title" style="justify-content: space-between;">
+                <span>Source_Input</span>
+                <div class="editor-actions">
+                    <button id="save-btn" class="action-btn">SAVE</button>
+                    <button id="clear-btn" class="action-btn">CLEAR</button>
+                    <button id="export-btn" class="action-btn">EXPORT</button>
+                    <button id="import-btn" class="action-btn">IMPORT</button>
+                </div>
+            </div>
+            <div class="editor-tabs">
+                <button class="tab active" data-tab="html">HTML</button>
+                <button class="tab" data-tab="css">CSS</button>
+                <button class="tab" data-tab="js">JS</button>
+            </div>
+            <div class="editor-workspace">
+                <textarea id="html-editor" placeholder="<!-- HTML Source -->" class="code-editor active"></textarea>
+                <textarea id="css-editor" placeholder="/* CSS Source */" class="code-editor"></textarea>
+                <textarea id="js-editor" placeholder="// JS Source" class="code-editor"></textarea>
+            </div>
+        </section>
+
+        <!-- Resize Handle -->
+        <div id="resizer" class="resizer"></div>
+
+        <!-- Preview Panel -->
+        <section class="preview-pane" id="preview-panel">
+            <div class="marker top-left"></div>
+            <div class="marker top-right"></div>
+            <div class="marker bot-left"></div>
+            <div class="marker bot-right"></div>
+
+            <div class="preview-canvas" id="canvas">
+                <iframe id="preview-iframe" title="preview"></iframe>
+            </div>
+
+            <div class="preview-label">REALTIME_VIEWPORT</div>
+        </section>
+    </main>
+
+    <div class="floating-action" id="new-snippet-btn" title="New Snippet">+</div>
+
+    <!-- Modal for naming snippets -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <h3>SAVE_SNIPPET</h3>
+            <input type="text" id="snippet-name" placeholder="ENT_NAME_HERE...">
+            <div class="modal-actions">
+                <button id="modal-cancel">CANCEL</button>
+                <button id="modal-save">CONFIRM</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+    <!-- Hidden file input for importing -->
+    <input type="file" id="file-input" accept=".json" style="display: none;">
+</body>
+
+</html>

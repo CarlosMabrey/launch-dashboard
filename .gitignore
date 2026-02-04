@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+dist-electron/
+build/
+
+# Environment variables (keep local ones but don't commit)
+.env.local
+.env.*.local
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Testing
+coverage/
+
+# Misc
+.cache/
+temp/
+tmp/
+
+# Workspace backups (keep the real things)
+workspace - Copy/
+
+# Memory error logs
+memory/*-http-*.md
+memory/*-error-*.md
+
+# Electron builder cache
+out/
+
+# Backup/legacy
+legacy/
+**/legacy/
