@@ -163,7 +163,7 @@ export async function getChatHistory(): Promise<ChatMessage[]> {
     }
 }
 
-export async function sendChatMessage(message: string): Promise<{
+export async function sendChatMessage(message: string, agentId: string = 'dashboard'): Promise<{
     success: boolean;
     userMessage?: ChatMessage;
     piResponse?: ChatMessage;
@@ -174,7 +174,7 @@ export async function sendChatMessage(message: string): Promise<{
         const response = await fetch(`${API_BASE}/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message })
+            body: JSON.stringify({ message, agentId })
         });
         return await response.json();
     } catch (error) {

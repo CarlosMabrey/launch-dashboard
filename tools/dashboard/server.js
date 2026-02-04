@@ -6,6 +6,7 @@ import fs from 'fs';
 import { google } from 'googleapis';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 
 dotenv.config({ path: '.env.local' });
 
@@ -33,8 +34,14 @@ let chatHistory = [
     { id: 'system-welcome', role: 'assistant', text: 'The bridge is open, Grand Architect. How may I assist you?', time: Date.now() }
 ];
 
+// Ensure mockups directory exists
+const MOCKUPS_DIR = path.join(PI_ROOT, 'tools', 'dashboard', 'apps', 'code-preview', 'saved', 'mockups');
+if (!fs.existsSync(MOCKUPS_DIR)) {
+    fs.mkdirSync(MOCKUPS_DIR, { recursive: true });
+}
+
 // Serve static mockups from code-preview/saved/mockups
-app.use('/mockups', express.static(path.join(PI_ROOT, 'tools', 'dashboard', 'apps', 'code-preview', 'saved', 'mockups')));
+app.use('/mockups', express.static(MOCKUPS_DIR));
 
 // OpenClaw Gateway Config
 // Token resolution order:
@@ -512,7 +519,7 @@ app.get('/api/pi/chat', (req, res) => {
 
 // Send message to Pi and get response
 app.post('/api/pi/chat', async (req, res) => {
-    const { message } = req.body;
+    const { message, agentId = 'dashboard' } = req.body;
     if (!message) return res.status(400).json({ error: 'Message is required' });
 
     // Add user message to history
@@ -526,18 +533,25 @@ app.post('/api/pi/chat', async (req, res) => {
 
     try {
         // Call OpenClaw Gateway OpenResponses API
-        const response = await fetch(`${OPENCLAW_GATEWAY.baseUrl}/v1/responses`, {
+        const responsePromise = fetch(`${OPENCLAW_GATEWAY.baseUrl}/v1/responses`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${OPENCLAW_GATEWAY.token}`
             },
             body: JSON.stringify({
-                model: 'openclaw',
+                model: agentId, 
                 input: message,
-                user: 'dashboard-user' // Derives a stable session key
+                user: 'dashboard-user' 
             })
         });
+
+        // Timeout for gateway response (don't block forever)
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Gateway timeout')), 30000)
+        );
+
+        const response = await Promise.race([responsePromise, timeoutPromise]);
 
         if (!response.ok) {
             const errorBody = await response.text();
@@ -547,14 +561,51 @@ app.post('/api/pi/chat', async (req, res) => {
         const data = await response.json();
         
         // Extract content from OpenResponses format
-        const outputText = data.output?.[0]?.content?.[0]?.text || 'I received your message but had trouble responding.';
+        let outputText = data.output?.[0]?.content?.[0]?.text || 'I received your message but had trouble responding.';
+        let previewUrl = null;
+
+        // Detect HTML/Code blocks for Astral Preview
+        const codeBlockRegex = /```(?:html|xml)?\s*([\s\S]*?)```/i;
+        const match = outputText.match(codeBlockRegex);
+
+        if (match) {
+            const code = match[1].trim();
+            // If it looks like HTML, save it for preview
+            if (code.includes('<') && (code.includes('</') || code.includes('/>'))) {
+                const filename = `preview-${crypto.randomUUID().slice(0, 8)}.html`;
+                const fullPath = path.join(MOCKUPS_DIR, filename);
+                
+                // Wrap in boilerplate if it's just a fragment
+                let html = code;
+                if (!code.toLowerCase().includes('<!doctype') && !code.toLowerCase().includes('<html')) {
+                    html = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #0c0c0c; color: white; font-family: sans-serif; padding: 20px; }
+    </style>
+</head>
+<body>
+    ${code}
+</body>
+</html>`;
+                }
+                
+                fs.writeFileSync(fullPath, html);
+                previewUrl = `http://localhost:3005/mockups/${filename}`;
+            }
+        }
 
         // Add Pi's response to history
         const piResponse = {
             id: `pi-${Date.now()}`,
             role: 'assistant',
             text: outputText,
-            time: Date.now()
+            time: Date.now(),
+            previewUrl
         };
         chatHistory.push(piResponse);
 
