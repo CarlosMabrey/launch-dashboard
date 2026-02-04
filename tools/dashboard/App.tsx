@@ -287,7 +287,7 @@ function PiWhispererCell({ chatHistory, onSend, onClear, isLoading }: PiWhispere
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────
-// Temporal Flux Cell (Calendar)
+// Temporal Flux Cell (Calendar) - Sleek & Ethereal Edition
 // ─────────────────────────────────────────────────────────────────────────────────
 interface TemporalFluxProps {
   events: CalendarEvent[];
@@ -375,7 +375,6 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
     e.preventDefault();
     setIsSubmitting(true);
     
-    // Construct ISO strings. Handle all-day if needed later, but for now assuming time.
     const startDateTime = new Date(`${startDate}T${startTime}:00`).toISOString();
     const endDateTime = new Date(`${endDate}T${endTime}:00`).toISOString();
     
@@ -435,47 +434,53 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
     return day === selectedDay.getDate();
   };
 
+  const isSameDay = (d1: Date, d2: Date) => {
+    return d1.getDate() === d2.getDate() && 
+           d1.getMonth() === d2.getMonth() && 
+           d1.getFullYear() === d2.getFullYear();
+  };
+
   return (
-    <div className={`${GLASS} rounded-2xl p-5 bg-gradient-to-br ${ACCENT.red} flex flex-col gap-4 overflow-hidden relative group/cal`}>
+    <div className={`${GLASS} rounded-2xl p-5 bg-gradient-to-b from-white/[0.03] to-transparent border-white/5 flex flex-col gap-4 overflow-hidden relative group/cal h-[420px]`}>
       {/* Event Details/Edit Overlay */}
       {selectedEvent && !isEditing && (
-        <div className="absolute inset-0 z-40 bg-[#0c0c0c]/95 backdrop-blur-md p-5 animate-in fade-in zoom-in duration-300 flex flex-col">
+        <div className="absolute inset-0 z-40 bg-black/85 backdrop-blur-md p-5 animate-in fade-in zoom-in duration-200 flex flex-col">
           <button 
             onClick={() => setSelectedEvent(null)}
-            className="absolute top-3 right-4 text-white/30 hover:text-white transition-colors"
+            className="absolute top-3 right-4 text-white/20 hover:text-white/50 transition-all text-sm"
           >
             ✕
           </button>
-          <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-rose-400 mb-2">Event Scrying</div>
-          <h4 className="text-sm font-bold text-white mb-1">{selectedEvent.summary}</h4>
-          <p className="text-[10px] text-white/50 mb-4">{formatEventTime(selectedEvent)}</p>
+          <div className="text-[8px] font-bold uppercase tracking-[0.2em] text-rose-400/70 mb-2">Event Scrying</div>
+          <h4 className="text-xs font-medium text-white mb-1">{selectedEvent.summary}</h4>
+          <p className="text-[9px] text-white/40 mb-3">{formatEventTime(selectedEvent)}</p>
           
-          <div className="flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-thin scrollbar-thumb-white/10">
+          <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
             {selectedEvent.location && (
-              <div className="space-y-1">
-                <div className="text-[8px] font-bold text-white/20 uppercase tracking-widest">Location</div>
-                <div className="text-[10px] text-white/70">{selectedEvent.location}</div>
+              <div className="space-y-0.5">
+                <div className="text-[7px] font-bold text-white/15 uppercase tracking-widest">Location</div>
+                <div className="text-[9px] text-white/50">{selectedEvent.location}</div>
               </div>
             )}
             {selectedEvent.description && (
-              <div className="space-y-1">
-                <div className="text-[8px] font-bold text-white/20 uppercase tracking-widest">Description</div>
-                <div className="text-[10px] text-white/60 italic leading-relaxed">{selectedEvent.description}</div>
+              <div className="space-y-0.5">
+                <div className="text-[7px] font-bold text-white/15 uppercase tracking-widest">Description</div>
+                <div className="text-[9px] text-white/40 italic leading-relaxed">{selectedEvent.description}</div>
               </div>
             )}
           </div>
           
-          <div className="flex gap-2 mt-4">
+          <div className="flex gap-2 mt-3">
             <button 
               onClick={() => handleEdit(selectedEvent)}
-              className="flex-1 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[9px] font-bold uppercase tracking-widest text-white/60 transition-all"
+              className="flex-1 py-1.5 bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg text-[8px] font-bold uppercase tracking-widest text-white/50 transition-all"
             >
               Modify
             </button>
             <button 
               onClick={handleDelete}
               disabled={isSubmitting}
-              className="px-4 py-2 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 rounded-lg text-[9px] font-bold uppercase tracking-widest text-rose-400 transition-all disabled:opacity-30"
+              className="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/15 rounded-lg text-[8px] font-bold uppercase tracking-widest text-rose-400/70 transition-all disabled:opacity-20"
             >
               Vanish
             </button>
@@ -485,104 +490,104 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
 
       {/* Add/Edit Form Overlay */}
       {(isAdding || isEditing) && (
-        <form onSubmit={handleSubmit} className="absolute inset-0 z-[100] bg-[#0c0c0c] p-5 animate-in slide-in-from-bottom-2 duration-300 flex flex-col gap-4">
+        <form onSubmit={handleSubmit} className="absolute inset-0 z-[100] bg-black/90 backdrop-blur-md p-5 animate-in slide-in-from-bottom-2 duration-200 flex flex-col gap-3.5">
           <div className="flex items-center justify-between shrink-0">
-            <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-rose-400">
+            <div className="text-[8px] font-bold uppercase tracking-[0.2em] text-rose-400/70">
               {isEditing ? 'Temporal Revision' : 'Timeline Manifestation'}
             </div>
             <button 
               type="button"
               onClick={() => { setIsAdding(false); setIsEditing(false); }}
-              className="w-6 h-6 rounded-full bg-white/5 flex items-center justify-center text-white/20 hover:text-white hover:bg-white/10 transition-all"
+              className="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-white/15 hover:text-white/30 hover:bg-white/10 transition-all text-xs"
             >
               ✕
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto space-y-4 pr-1 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto space-y-3 pr-0.5">
             <div className="space-y-1">
-              <label className="text-[8px] font-bold text-white/30 uppercase tracking-widest">Summary</label>
+              <label className="text-[7px] font-bold text-white/15 uppercase tracking-widest">Summary</label>
               <input 
                 required
                 value={summary}
                 onChange={e => setSummary(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-xs text-white outline-none focus:border-rose-500/50 focus:bg-white/[0.08] transition-all"
+                className="w-full bg-white/5 border border-white/5 rounded-lg px-3 py-2 text-[10px] text-white outline-none focus:border-rose-500/30 focus:bg-white/8 transition-all placeholder:text-white/20"
                 placeholder="What occurs?"
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-2.5">
               <div className="space-y-1">
-                <label className="text-[8px] font-bold text-white/30 uppercase tracking-widest">Start Date</label>
+                <label className="text-[7px] font-bold text-white/15 uppercase tracking-widest">Start Date</label>
                 <input 
                   type="date"
                   required
                   value={startDate}
                   onChange={e => setStartDate(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-[10px] text-white outline-none focus:border-rose-500/30"
+                  className="w-full bg-white/5 border border-white/5 rounded-lg px-2.5 py-1.5 text-[9px] text-white outline-none focus:border-rose-500/20"
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-[8px] font-bold text-white/30 uppercase tracking-widest">Start Time</label>
+                <label className="text-[7px] font-bold text-white/15 uppercase tracking-widest">Start Time</label>
                 <input 
                   type="time"
                   required
                   value={startTime}
                   onChange={e => setStartTime(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-[10px] text-white outline-none focus:border-rose-500/30"
+                  className="w-full bg-white/5 border border-white/5 rounded-lg px-2.5 py-1.5 text-[9px] text-white outline-none focus:border-rose-500/20"
                 />
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-2.5">
               <div className="space-y-1">
-                <label className="text-[8px] font-bold text-white/30 uppercase tracking-widest">End Date</label>
+                <label className="text-[7px] font-bold text-white/15 uppercase tracking-widest">End Date</label>
                 <input 
                   type="date"
                   required
                   value={endDate}
                   onChange={e => setEndDate(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-[10px] text-white outline-none focus:border-rose-500/30"
+                  className="w-full bg-white/5 border border-white/5 rounded-lg px-2.5 py-1.5 text-[9px] text-white outline-none focus:border-rose-500/20"
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-[8px] font-bold text-white/30 uppercase tracking-widest">End Time</label>
+                <label className="text-[7px] font-bold text-white/15 uppercase tracking-widest">End Time</label>
                 <input 
                   type="time"
                   required
                   value={endTime}
                   onChange={e => setEndTime(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-[10px] text-white outline-none focus:border-rose-500/30"
+                  className="w-full bg-white/5 border border-white/5 rounded-lg px-2.5 py-1.5 text-[9px] text-white outline-none focus:border-rose-500/20"
                 />
               </div>
             </div>
 
             <div className="space-y-1">
-              <label className="text-[8px] font-bold text-white/30 uppercase tracking-widest">Location</label>
+              <label className="text-[7px] font-bold text-white/15 uppercase tracking-widest">Location</label>
               <input 
                 value={location}
                 onChange={e => setLocation(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-[10px] text-white outline-none focus:border-rose-500/30"
+                className="w-full bg-white/5 border border-white/5 rounded-lg px-3 py-1.5 text-[9px] text-white outline-none focus:border-rose-500/20 placeholder:text-white/20"
                 placeholder="Where?"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-[8px] font-bold text-white/30 uppercase tracking-widest">Description</label>
+              <label className="text-[7px] font-bold text-white/15 uppercase tracking-widest">Description</label>
               <textarea 
                 value={description}
                 onChange={e => setDescription(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-[10px] text-white outline-none h-20 resize-none focus:border-rose-500/30"
+                className="w-full bg-white/5 border border-white/5 rounded-lg px-3 py-1.5 text-[9px] text-white outline-none h-16 resize-none focus:border-rose-500/20 placeholder:text-white/20"
                 placeholder="Details..."
               />
             </div>
           </div>
 
-          <div className="pt-2 shrink-0">
+          <div className="pt-1 shrink-0">
             <button 
               type="submit"
               disabled={isSubmitting}
-              className="w-full py-3 bg-rose-600/40 hover:bg-rose-600/60 border border-rose-500/30 rounded-xl text-xs font-bold uppercase tracking-widest text-rose-100 shadow-lg shadow-rose-900/20 transition-all disabled:opacity-30 active:scale-[0.98]"
+              className="w-full py-2 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/20 rounded-xl text-[9px] font-bold uppercase tracking-widest text-rose-300/80 transition-all disabled:opacity-20 active:scale-[0.98]"
             >
               {isSubmitting ? 'Manifesting...' : (isEditing ? 'Seal Revision' : 'Manifest Event')}
             </button>
@@ -590,49 +595,51 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
         </form>
       )}
 
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-white/50">Temporal Flux</h3>
+      {/* Header */}
+      <div className="flex items-center justify-between shrink-0">
+        <h3 className="text-[10px] font-semibold uppercase tracking-widest text-white/30">Temporal Flux</h3>
         <div className="flex items-center gap-3">
           <button 
             onClick={() => { resetForm(); setIsAdding(true); }}
-            className="text-rose-400 hover:text-white transition-colors"
+            className="text-rose-400/60 hover:text-rose-400 transition-colors"
             title="Add Event"
           >
             <span className="text-lg">+</span>
           </button>
           <button 
             onClick={handleOpenCalendar}
-            className="text-rose-400 text-xs font-mono hover:text-white transition-colors"
+            className="text-rose-400/60 text-[9px] font-mono hover:text-rose-400 transition-colors"
           >
             {selectedDay.toLocaleDateString()}
           </button>
         </div>
       </div>
 
-      <div className="flex items-baseline gap-2">
-        <span className="text-5xl font-bold text-white tracking-tight">{selectedDay.getDate()}</span>
+      {/* Large Date Display */}
+      <div className="flex items-baseline gap-2 shrink-0">
+        <span className="text-5xl font-bold text-white/70 tracking-tight">{selectedDay.getDate()}</span>
         <div className="flex flex-col">
-          <span className="text-lg font-medium text-rose-400">{dayNames[selectedDay.getDay()]}</span>
-          <span className="text-xs text-white/40">{monthNames[selectedDay.getMonth()]} {selectedDay.getFullYear()}</span>
+          <span className="text-sm font-medium text-rose-400/60">{dayNames[selectedDay.getDay()]}</span>
+          <span className="text-[10px] text-white/25">{monthNames[selectedDay.getMonth()]} {selectedDay.getFullYear()}</span>
         </div>
       </div>
 
       {/* Mini Calendar Grid */}
-      <div className="grid grid-cols-7 gap-0.5 text-center">
+      <div className="grid grid-cols-7 gap-0.5 text-center shrink-0">
         {dayNames.map(d => (
-          <div key={d} className="text-[9px] text-white/30 py-1">{d[0]}</div>
+          <div key={d} className="text-[8px] text-white/20 py-0.5">{d[0]}</div>
         ))}
         {days.map((day, i) => (
           <div
             key={i}
             onClick={() => day && handleDayClick(day)}
-            className={`text-[10px] py-1 rounded transition-all cursor-pointer ${
+            className={`text-[9px] py-0.5 rounded transition-all cursor-pointer min-h-[1.75rem] flex items-center justify-center ${
               day 
                 ? isSelected(day)
-                  ? 'bg-rose-500 text-white font-bold shadow-[0_0_10px_rgba(244,63,94,0.4)]'
+                  ? 'bg-rose-500/40 text-white font-medium shadow-sm'
                   : isToday(day)
-                    ? 'bg-rose-500/20 text-rose-300 font-bold'
-                    : 'text-white/50 hover:bg-white/5'
+                    ? 'text-rose-300/60 font-medium'
+                    : 'text-white/35 hover:text-white/55 hover:bg-white/5'
                 : ''
             }`}
           >
@@ -642,22 +649,22 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
       </div>
 
       {/* Events List */}
-      <div className="flex-1 overflow-y-auto space-y-2 mt-2 scrollbar-none">
-        <div className="flex items-center justify-between mb-1">
-          <h4 className="text-[9px] font-bold uppercase tracking-widest text-white/30">Upcoming Disturbances</h4>
-          <button onClick={onRefresh} className="text-[8px] text-white/20 hover:text-white">Refresh</button>
+      <div className="flex-1 overflow-y-auto space-y-1.5 mt-1 scrollbar-thin scrollbar-thumb-white/5 scrollbar-track-transparent">
+        <div className="flex items-center justify-between mb-1.5">
+          <h4 className="text-[8px] font-bold uppercase tracking-widest text-white/20">Upcoming Disturbances</h4>
+          <button onClick={onRefresh} className="text-[7px] text-white/15 hover:text-white/25 transition-colors">Refresh</button>
         </div>
         {filteredEvents.length === 0 ? (
-          <div className="text-[10px] text-white/20 italic">No aetheric disturbances detected.</div>
+          <div className="text-[9px] text-white/15 italic">No aetheric disturbances.</div>
         ) : (
-          filteredEvents.slice(0, 4).map(event => (
+          filteredEvents.slice(0, 5).map(event => (
             <div 
               key={event.id} 
               onClick={() => setSelectedEvent(event)}
-              className="bg-white/5 rounded-lg p-2 border border-white/5 hover:bg-white/10 hover:border-rose-500/20 transition-all cursor-pointer group/item"
+              className="bg-white/3 rounded-md p-2 border border-white/3 hover:bg-white/6 hover:border-rose-500/15 transition-all cursor-pointer group/item"
             >
-              <div className="text-[10px] font-medium text-white/80 group-hover/item:text-rose-300 truncate transition-colors">{event.summary}</div>
-              <div className="text-[8px] text-white/30 mt-0.5">{formatEventTime(event)}</div>
+              <div className="text-[9px] font-medium text-white/60 group-hover/item:text-rose-300/70 truncate transition-colors">{event.summary}</div>
+              <div className="text-[7px] text-white/20 mt-0.5">{formatEventTime(event)}</div>
             </div>
           ))
         )}
@@ -1055,6 +1062,7 @@ const App: React.FC = () => {
   const [vanFund, setVanFund] = useState<VanFundData>({ current: 0, target: 50000, contributions: [] });
   const [githubActivity, setGithubActivity] = useState<GithubActivity>({ totalContributions: 0, dailyHistory: {} });
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [sidebarsCollapsed, setSidebarsCollapsed] = useState(true);
 
   // ─── Data Fetching ─────────────────────────────────────────────────────────────
   const fetchAllData = useCallback(async () => {
@@ -1255,14 +1263,14 @@ const App: React.FC = () => {
       {/* Aura Scheme + Color Adjuster */}
       <AuraSettings />
 
-      {/* MAIN CONTENT - floating high in the upper atmosphere */}
-      <main className={`relative z-10 grid grid-cols-[11%_89%] w-[90%] mx-auto mt-6 mb-2 ultra-glass overflow-hidden transition-all duration-700 h-[55vh] ${selectedApp ? 'blur-xl scale-95 opacity-30 grayscale pointer-events-none' : 'opacity-100 scale-100'}`}>
+      {/* MAIN CONTENT */}
+      <main className={`relative z-10 grid ${sidebarsCollapsed ? 'grid-cols-[0%_100%] w-[98%] mx-auto mt-4' : 'grid-cols-[11%_89%] w-[90%] mx-auto mt-6 mb-2'} ultra-glass overflow-hidden transition-all duration-700 h-[55vh] ${selectedApp ? 'blur-xl scale-95 opacity-30 grayscale pointer-events-none' : 'opacity-100 scale-100'}`}>
         
         {/* SIDEBAR */}
-        <nav className="main-menu-glass border-r border-white/20 h-full flex flex-col justify-between">
+        <nav className={`main-menu-glass border-r border-white/20 h-full flex flex-col justify-between transition-opacity duration-500 ${sidebarsCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'}`}>
           <div>
-            <div className="flex flex-col items-center py-8">
-              <div className="w-16 h-16 rounded-full border-2 border-white/20 p-1 mb-4 flex items-center justify-center overflow-hidden bg-white/5">
+            <div className="flex flex-col items-center py-8 cursor-pointer" onClick={() => setSidebarsCollapsed(true)} title="Collapse sidebars">
+              <div className="w-16 h-16 rounded-full border-2 border-white/20 p-1 mb-4 flex items-center justify-center overflow-hidden bg-white/5 hover:bg-white/10 transition-colors">
                 <span className="text-3xl">🧙‍♂️</span>
               </div>
               <p className="text-white text-xs font-bold tracking-widest uppercase">Pi</p>
@@ -1307,7 +1315,7 @@ const App: React.FC = () => {
         </nav>
 
         {/* CONTENT */}
-        <section className="grid grid-cols-[73%_27%]">
+        <section className={`grid ${sidebarsCollapsed ? 'grid-cols-[100%_0%]' : 'grid-cols-[73%_27%]'}`}>
           
           {/* LEFT CONTENT */}
           <div className="p-8 overflow-y-auto max-h-[90vh] custom-scrollbar">
@@ -1317,7 +1325,12 @@ const App: React.FC = () => {
               <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
                 {/* Header / Search */}
                 <div className="flex items-center justify-between mb-8">
-                  <h1 className="text-2xl font-bold text-white uppercase tracking-widest">Discover Missions</h1>
+                  <div className="flex items-center gap-3">
+                    {sidebarsCollapsed && (
+                      <button onClick={() => setSidebarsCollapsed(false)} className="text-xl hover:scale-110 transition-transform" title="Expand sidebars">🧙‍♂️</button>
+                    )}
+                    <h1 className="text-2xl font-bold text-white uppercase tracking-widest">Discover Missions</h1>
+                  </div>
                   <button
                     onClick={() => setCommandPaletteOpen(true)}
                     className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-4 py-2 flex items-center gap-3 transition-all"
@@ -1424,7 +1437,7 @@ const App: React.FC = () => {
           </div>
 
           {/* RIGHT CONTENT */}
-          <div className="border-l border-white/20 p-8 flex flex-col">
+          <div className={`border-l border-white/20 p-8 flex flex-col transition-all duration-500 ${sidebarsCollapsed ? 'opacity-0 p-0 overflow-hidden border-l-0' : 'opacity-100'}`}>
             
             {/* Recent Heartbeats (Recommended Songs Area) */}
             <div className="flex-1">
