@@ -14,6 +14,7 @@ import AppWindow from './components/AppWindow';
 import EmbeddedAppSidebar from './components/EmbeddedAppSidebar';
 import AuraSettings from './components/AuraSettings';
 import LiquidBackground from './components/LiquidBackground';
+import TodoBoardCell from './components/TodoBoardCell';
 
 // ════════════════════════════════════════════════════════════════════════════════
 // DESIGN TOKENS
@@ -221,20 +222,22 @@ function PiWhispererCell({ chatHistory, onSend, onClear, isLoading }: PiWhispere
             >
               <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.text}</p>
               
-              {/* Astral Preview (Aetheric Mockups) */}
+              {/* Astral Preview (Aetheric Mockups) - Always visible */}
               {msg.previewUrl && (
-                <div className="mt-3 rounded-xl overflow-hidden border border-white/10 bg-black/40 h-48 relative group/preview">
+                <div className="mt-3 rounded-xl overflow-hidden border border-white/10 bg-black/40 h-48 relative">
                   <iframe 
                     src={msg.previewUrl} 
-                    className="w-full h-full pointer-events-none" 
+                    className="w-full h-full" 
                     title="Code Preview"
+                    style={{ pointerEvents: 'auto' }}
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover/preview:opacity-100 transition-opacity flex items-end p-2">
+                  <div className="absolute top-2 right-2">
                     <button 
                       onClick={() => window.open(msg.previewUrl, '_blank')}
-                      className="bg-violet-500/80 hover:bg-violet-500 text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-lg text-white backdrop-blur-sm pointer-events-auto"
+                      className="bg-violet-500/80 hover:bg-violet-500 text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-lg text-white backdrop-blur-sm transition-colors"
+                      title="Open in new tab"
                     >
-                      Summon Full View
+                      Expand
                     </button>
                   </div>
                 </div>
@@ -287,388 +290,878 @@ function PiWhispererCell({ chatHistory, onSend, onClear, isLoading }: PiWhispere
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────
-// Temporal Flux Cell (Calendar) - Sleek & Ethereal Edition
+// Temporal Flux Cell - Apple-Inspired Calendar
 // ─────────────────────────────────────────────────────────────────────────────────
 interface TemporalFluxProps {
   events: CalendarEvent[];
   onRefresh: () => Promise<void>;
 }
 function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
-  const now = new Date();
-  const [selectedDay, setSelectedDay] = useState<Date>(new Date());
+  const [view, setView] = useState<'month' | 'week' | 'day'>('month');
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
-  const [isEditing, setIsEditing] = useState(false);
-  const [isAdding, setIsAdding] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  
-  // Form State
-  const [summary, setSummary] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [startTime, setStartTime] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [endTime, setEndTime] = useState('');
-  const [location, setLocation] = useState('');
+  const [isAnimating, setIsAnimating] = useState(false);
+
+  // Form state
+  const [title, setTitle] = useState('');
+  const [startDateTime, setStartDateTime] = useState('');
+  const [endDateTime, setEndDateTime] = useState('');
   const [description, setDescription] = useState('');
+  const [location, setLocation] = useState('');
+  const [isAllDay, setIsAllDay] = useState(false);
 
-  const dayNames = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
-  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-  
-  const firstDay = new Date(selectedDay.getFullYear(), selectedDay.getMonth(), 1).getDay();
-  const daysInMonth = new Date(selectedDay.getFullYear(), selectedDay.getMonth() + 1, 0).getDate();
-  const days = Array.from({ length: 42 }, (_, i) => {
-    const day = i - firstDay + 1;
-    return day > 0 && day <= daysInMonth ? day : null;
-  });
-
-  const filteredEvents = useMemo(() => {
-    const dayStr = selectedDay.toISOString().split('T')[0];
-    return events.filter(event => {
-      const eventDate = (event.start.dateTime || event.start.date)?.split('T')[0];
-      return eventDate === dayStr;
-    });
-  }, [events, selectedDay]);
-
-  const formatEventTime = (event: CalendarEvent) => {
-    if (event.start.date) return 'All Day';
-    if (event.start.dateTime) {
-      const start = new Date(event.start.dateTime);
-      const end = event.end?.dateTime ? new Date(event.end.dateTime) : null;
-      const timeStr = start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      if (end) {
-        const endTimeStr = end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        return `${timeStr} — ${endTimeStr}`;
-      }
-      return timeStr;
-    }
-    return '';
+  // Apple-inspired design tokens with dynamic accent from Aura settings
+  const COLORS = {
+    bg: 'bg-white/90 backdrop-blur-2xl',
+    border: 'border-gray-200/60',
+    hover: 'hover:bg-gray-50/80',
+    accent: 'bg-[color-mix(in_srgb,var(--aura-4)_12%,transparent)] text-[var(--aura-4)] border-[color:color-mix(in_srgb,var(--aura-4)_20%,transparent)]',
+    accentHover: 'hover:bg-[color-mix(in_srgb,var(--aura-4)_18%,transparent)]',
+    todayRing: 'ring-2 ring-[color:color-mix(in_srgb,var(--aura-4)_40%,transparent)]',
+    selected: 'bg-[color-mix(in_srgb,var(--aura-4)_10%,transparent)] border-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)]',
+    eventBg: 'bg-[color-mix(in_srgb,var(--aura-4)_14%,transparent)] border-l-2 border-[color:color-mix(in_srgb,var(--aura-4)_40%,transparent)]',
+    eventHover: 'hover:bg-[color-mix(in_srgb,var(--aura-4)_20%,transparent)]',
+    text: {
+      primary: 'text-gray-900',
+      secondary: 'text-gray-600',
+      tertiary: 'text-gray-400'
+    },
+    shadow: 'shadow-lg shadow-gray-200/30'
   };
 
-  const resetForm = () => {
-    setSummary('');
-    const dateStr = selectedDay.toISOString().split('T')[0];
-    setStartDate(dateStr);
-    setStartTime('09:00');
-    setEndDate(dateStr);
-    setEndTime('10:00');
-    setLocation('');
-    setDescription('');
+  const loading = false; // Events loaded via parent
+
+  // Navigation with smooth animation
+  const navigatePrevious = () => {
+    setIsAnimating(true);
+    const next = new Date(currentDate);
+    if (view === 'month') {
+      next.setMonth(next.getMonth() - 1);
+    } else if (view === 'week') {
+      next.setDate(next.getDate() - 7);
+    } else {
+      next.setDate(next.getDate() - 1);
+    }
+    setCurrentDate(next);
+    setTimeout(() => setIsAnimating(false), 250);
   };
 
-  const handleEdit = (event: CalendarEvent) => {
-    setSummary(event.summary);
-    if (event.start.dateTime || event.start.date) {
-      const start = new Date(event.start.dateTime || event.start.date!);
-      setStartDate(start.toISOString().split('T')[0]);
-      if (event.start.dateTime) setStartTime(start.toTimeString().split(' ')[0].substring(0, 5));
+  const navigateNext = () => {
+    setIsAnimating(true);
+    const next = new Date(currentDate);
+    if (view === 'month') {
+      next.setMonth(next.getMonth() + 1);
+    } else if (view === 'week') {
+      next.setDate(next.getDate() + 7);
+    } else {
+      next.setDate(next.getDate() + 1);
     }
-    if (event.end?.dateTime || event.end?.date) {
-      const end = new Date(event.end.dateTime || event.end.date!);
-      setEndDate(end.toISOString().split('T')[0]);
-      if (event.end.dateTime) setEndTime(end.toTimeString().split(' ')[0].substring(0, 5));
-    }
-    setLocation(event.location || '');
+    setCurrentDate(next);
+    setTimeout(() => setIsAnimating(false), 250);
+  };
+
+  const navigateToday = () => {
+    setIsAnimating(true);
+    const today = new Date();
+    setCurrentDate(today);
+    setSelectedDate(today);
+    setTimeout(() => setIsAnimating(false), 250);
+  };
+
+  // Event CRUD operations
+  const openCreateModal = (date?: Date, time?: string) => {
+    const baseDate = date || selectedDate;
+    const dateStr = baseDate.toISOString().split('T')[0];
+    const timeStr = time || '09:00';
+
+    setStartDateTime(`${dateStr}T${timeStr}:00`);
+    setEndDateTime(`${dateStr}T${timeStr}:00`);
+    resetForm();
+    setShowModal(true);
+  };
+
+  const openEditModal = (event: CalendarEvent) => {
+    setEditingEvent(event);
+    setTitle(event.summary);
     setDescription(event.description || '');
-    setIsEditing(true);
+    setLocation(event.location || '');
+
+    if (event.start.date) {
+      setIsAllDay(true);
+      setStartDateTime(event.start.date);
+      setEndDateTime(event.end?.date || event.start.date);
+    } else if (event.start.dateTime) {
+      setIsAllDay(false);
+      const start = new Date(event.start.dateTime);
+      const end = event.end?.dateTime ? new Date(event.end.dateTime) : start;
+      setStartDateTime(start.toISOString());
+      setEndDateTime(end.toISOString());
+    }
+
+    setShowModal(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
-    
-    const startDateTime = new Date(`${startDate}T${startTime}:00`).toISOString();
-    const endDateTime = new Date(`${endDate}T${endTime}:00`).toISOString();
-    
-    const eventBody = {
-      summary,
-      start: { dateTime: startDateTime },
-      end: { dateTime: endDateTime },
-      location,
-      description
-    };
 
-    let success = false;
-    if (isEditing && selectedEvent) {
-      success = await updateCalendarEvent(selectedEvent.id, eventBody);
-    } else {
-      success = await createCalendarEvent(eventBody);
-    }
+    const eventBody = isAllDay
+      ? {
+          summary: title,
+          start: { date: startDateTime.split('T')[0] },
+          end: { date: endDateTime.split('T')[0] },
+          description,
+          location
+        }
+      : {
+          summary: title,
+          start: { dateTime: startDateTime },
+          end: { dateTime: endDateTime },
+          description,
+          location
+        };
+
+    const success = editingEvent
+      ? await updateCalendarEvent(editingEvent.id, eventBody)
+      : await createCalendarEvent(eventBody);
 
     if (success) {
       await onRefresh();
-      setIsEditing(false);
-      setIsAdding(false);
-      setSelectedEvent(null);
+      setShowModal(false);
       resetForm();
     }
     setIsSubmitting(false);
   };
 
   const handleDelete = async () => {
-    if (!selectedEvent) return;
-    if (!window.confirm('Vanish this disturbance from the timeline?')) return;
-    
-    setIsSubmitting(true);
-    const success = await deleteCalendarEvent(selectedEvent.id);
+    if (!editingEvent || !window.confirm('Delete this event?')) return;
+    const success = await deleteCalendarEvent(editingEvent.id);
     if (success) {
       await onRefresh();
-      setSelectedEvent(null);
+      setShowModal(false);
+      resetForm();
     }
-    setIsSubmitting(false);
   };
 
-  const handleOpenCalendar = () => {
-    window.open('https://calendar.google.com', '_blank');
+  const resetForm = () => {
+    setTitle('');
+    setStartDateTime('');
+    setEndDateTime('');
+    setDescription('');
+    setLocation('');
+    setIsAllDay(false);
+    setEditingEvent(null);
   };
 
-  const handleDayClick = (day: number) => {
-    const next = new Date(selectedDay);
-    next.setDate(day);
-    setSelectedDay(next);
+  // Date utilities
+  const getMonthStart = (date: Date) => new Date(date.getFullYear(), date.getMonth(), 1);
+  const getMonthEnd = (date: Date) => new Date(date.getFullYear(), date.getMonth() + 1, 0);
+  const getWeekRange = (date: Date) => {
+    const day = date.getDay();
+    const diff = day === 0 ? 6 : day - 1;
+    const start = new Date(date);
+    start.setDate(start.getDate() - diff);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    return { start, end };
   };
 
-  const isToday = (day: number) => {
-    return day === now.getDate() && selectedDay.getMonth() === now.getMonth() && selectedDay.getFullYear() === now.getFullYear();
+  const formatDateDisplay = () => {
+    if (view === 'month') {
+      return currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    } else if (view === 'week') {
+      const { start, end } = getWeekRange(currentDate);
+      const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
+      if (start.getMonth() !== end.getMonth() || start.getFullYear() !== end.getFullYear()) {
+        return `${start.toLocaleDateString('en-US', options)} — ${end.toLocaleDateString('en-US', { ...options, year: 'numeric' })}`;
+      }
+      return `${start.toLocaleDateString('en-US', options)} — ${end.getDate()}`;
+    } else {
+      return currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    }
   };
 
-  const isSelected = (day: number) => {
-    return day === selectedDay.getDate();
+  const getDaysForView = () => {
+    if (view === 'month') {
+      const start = getMonthStart(currentDate);
+      const end = getMonthEnd(currentDate);
+      const startDay = start.getDay();
+      const daysInMonth = end.getDate();
+
+      const days: (Date | null)[] = [];
+
+      // Previous month padding
+      const prevMonthEnd = new Date(start);
+      prevMonthEnd.setDate(prevMonthEnd.getDate() - 1);
+      for (let i = startDay - 1; i >= 0; i--) {
+        const day = new Date(prevMonthEnd);
+        day.setDate(prevMonthEnd.getDate() - i);
+        days.push(day);
+      }
+
+      // Current month
+      for (let i = 1; i <= daysInMonth; i++) {
+        days.push(new Date(currentDate.getFullYear(), currentDate.getMonth(), i));
+      }
+
+      // Next month padding
+      const remaining = 42 - days.length;
+      for (let i = 1; i <= remaining; i++) {
+        days.push(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, i));
+      }
+
+      return days;
+    } else if (view === 'week') {
+      const { start } = getWeekRange(currentDate);
+      return Array.from({ length: 7 }, (_, i) => {
+        const day = new Date(start);
+        day.setDate(start.getDate() + i);
+        return day;
+      });
+    } else {
+      return [new Date(currentDate)];
+    }
   };
 
+  const getHourSlots = () => Array.from({ length: 24 }, (_, i) => i);
+
+  const getEventsForDate = (date: Date) => {
+    const dateStr = date.toISOString().split('T')[0];
+    return events
+      .filter(event => (event.start.dateTime || event.start.date)?.split('T')[0] === dateStr)
+      .sort((a, b) => {
+        const aTime = a.start.dateTime || a.start.date || '';
+        const bTime = b.start.dateTime || b.start.date || '';
+        return aTime.localeCompare(bTime);
+      });
+  };
+
+  const isToday = (date: Date) => {
+    const today = new Date();
+    return date.getDate() === today.getDate() &&
+           date.getMonth() === today.getMonth() &&
+           date.getFullYear() === today.getFullYear();
+  };
+
+  const isSelected = (date: Date) => {
+    return date.getDate() === selectedDate.getDate() &&
+           date.getMonth() === selectedDate.getMonth() &&
+           date.getFullYear() === selectedDate.getFullYear();
+  };
+
+  const handleDateClick = (date: Date, time?: string) => {
+    setSelectedDate(date);
+    // If we're in month or week view, switch to day view for this date
+    if (view !== 'day') {
+      setView('day');
+      setCurrentDate(new Date(date));
+    }
+    // If a specific time was provided (from week view click), open modal at that time
+    if (time) {
+      openCreateModal(date, time);
+    }
+    // If in day view already, clicking opens modal at default time (don't switch view)
+  };
+
+  const handleEventClick = (event: CalendarEvent, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedEvent(event);
+    openEditModal(event);
+  };
+
+  const getEventPosition = (event: CalendarEvent) => {
+    if (!event.start.dateTime) return { top: 0, height: 40 };
+    const start = new Date(event.start.dateTime);
+    const end = new Date(event.end?.dateTime || start);
+    const startMinute = start.getHours() * 60 + start.getMinutes();
+    const duration = (end.getTime() - start.getTime()) / (1000 * 60);
+    return {
+      top: startMinute,
+      height: Math.max(duration, 30)
+    };
+  };
+
+  const formatHour = (hour: number) => {
+    return hour === 0 ? '12 AM' : hour < 12 ? `${hour} AM` : hour === 12 ? '12 PM' : `${hour - 12} PM`;
+  };
+
+  // Compare two dates to see if they represent the same calendar day
   const isSameDay = (d1: Date, d2: Date) => {
-    return d1.getDate() === d2.getDate() && 
-           d1.getMonth() === d2.getMonth() && 
+    return d1.getDate() === d2.getDate() &&
+           d1.getMonth() === d2.getMonth() &&
            d1.getFullYear() === d2.getFullYear();
   };
 
-  return (
-    <div className={`${GLASS} rounded-2xl p-5 bg-gradient-to-b from-white/[0.03] to-transparent border-white/5 flex flex-col gap-4 overflow-hidden relative group/cal h-[420px]`}>
-      {/* Event Details/Edit Overlay */}
-      {selectedEvent && !isEditing && (
-        <div className="absolute inset-0 z-40 bg-black/85 backdrop-blur-md p-5 animate-in fade-in zoom-in duration-200 flex flex-col">
-          <button 
-            onClick={() => setSelectedEvent(null)}
-            className="absolute top-3 right-4 text-white/20 hover:text-white/50 transition-all text-sm"
-          >
-            ✕
-          </button>
-          <div className="text-[8px] font-bold uppercase tracking-[0.2em] text-rose-400/70 mb-2">Event Scrying</div>
-          <h4 className="text-xs font-medium text-white mb-1">{selectedEvent.summary}</h4>
-          <p className="text-[9px] text-white/40 mb-3">{formatEventTime(selectedEvent)}</p>
-          
-          <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
-            {selectedEvent.location && (
-              <div className="space-y-0.5">
-                <div className="text-[7px] font-bold text-white/15 uppercase tracking-widest">Location</div>
-                <div className="text-[9px] text-white/50">{selectedEvent.location}</div>
-              </div>
-            )}
-            {selectedEvent.description && (
-              <div className="space-y-0.5">
-                <div className="text-[7px] font-bold text-white/15 uppercase tracking-widest">Description</div>
-                <div className="text-[9px] text-white/40 italic leading-relaxed">{selectedEvent.description}</div>
-              </div>
-            )}
-          </div>
-          
-          <div className="flex gap-2 mt-3">
-            <button 
-              onClick={() => handleEdit(selectedEvent)}
-              className="flex-1 py-1.5 bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg text-[8px] font-bold uppercase tracking-widest text-white/50 transition-all"
-            >
-              Modify
-            </button>
-            <button 
-              onClick={handleDelete}
-              disabled={isSubmitting}
-              className="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/15 rounded-lg text-[8px] font-bold uppercase tracking-widest text-rose-400/70 transition-all disabled:opacity-20"
-            >
-              Vanish
-            </button>
-          </div>
+  // Check if current period is today
+  const isCurrentPeriod = (() => {
+    if (view === 'month') {
+      return currentDate.getMonth() === new Date().getMonth() && currentDate.getFullYear() === new Date().getFullYear();
+    } else if (view === 'week') {
+      const { start, end } = getWeekRange(currentDate);
+      const today = new Date();
+      return today >= start && today <= end;
+    } else {
+      return isSameDay(currentDate, new Date());
+    }
+  })();
+
+  // Render helpers
+  const renderMonthView = () => {
+    const days = getDaysForView();
+    const weekDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className={`grid grid-cols-7 ${COLORS.border} border-b`}>
+          {weekDays.map(day => (
+            <div key={day} className="text-center text-[11px] font-medium text-gray-400 py-3 uppercase tracking-wider">
+              {day}
+            </div>
+          ))}
         </div>
-      )}
 
-      {/* Add/Edit Form Overlay */}
-      {(isAdding || isEditing) && (
-        <form onSubmit={handleSubmit} className="absolute inset-0 z-[100] bg-black/90 backdrop-blur-md p-5 animate-in slide-in-from-bottom-2 duration-200 flex flex-col gap-3.5">
-          <div className="flex items-center justify-between shrink-0">
-            <div className="text-[8px] font-bold uppercase tracking-[0.2em] text-rose-400/70">
-              {isEditing ? 'Temporal Revision' : 'Timeline Manifestation'}
-            </div>
-            <button 
-              type="button"
-              onClick={() => { setIsAdding(false); setIsEditing(false); }}
-              className="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center text-white/15 hover:text-white/30 hover:bg-white/10 transition-all text-xs"
-            >
-              ✕
-            </button>
-          </div>
+        <div className="grid grid-cols-7 flex-1 auto-rows-fr">
+          {days.map((date, idx) => {
+            const dateEvents = getEventsForDate(date);
+            const isCurrentMonth = date.getMonth() === currentDate.getMonth();
+            const isSelectedDate = isSelected(date);
+            const isTodayDate = isToday(date);
 
-          <div className="flex-1 overflow-y-auto space-y-3 pr-0.5">
-            <div className="space-y-1">
-              <label className="text-[7px] font-bold text-white/15 uppercase tracking-widest">Summary</label>
-              <input 
-                required
-                value={summary}
-                onChange={e => setSummary(e.target.value)}
-                className="w-full bg-white/5 border border-white/5 rounded-lg px-3 py-2 text-[10px] text-white outline-none focus:border-rose-500/30 focus:bg-white/8 transition-all placeholder:text-white/20"
-                placeholder="What occurs?"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-2.5">
-              <div className="space-y-1">
-                <label className="text-[7px] font-bold text-white/15 uppercase tracking-widest">Start Date</label>
-                <input 
-                  type="date"
-                  required
-                  value={startDate}
-                  onChange={e => setStartDate(e.target.value)}
-                  className="w-full bg-white/5 border border-white/5 rounded-lg px-2.5 py-1.5 text-[9px] text-white outline-none focus:border-rose-500/20"
-                />
+            return (
+              <div
+                key={idx}
+                onClick={() => handleDateClick(date)}
+                className={`${COLORS.border} border-b border-r p-2 min-h-[100px] cursor-pointer transition-colors duration-200 hover:bg-gray-50/60 ${!isCurrentMonth ? 'bg-gray-50/30 text-gray-400' : ''} ${isSelectedDate ? COLORS.selected : ''}`}
+              >
+                <div className={`text-sm font-medium mb-1.5 w-6 h-6 flex items-center justify-center rounded-full ${isTodayDate ? 'bg-[var(--aura-4)] text-white font-semibold' : 'text-gray-700'} ${isSelectedDate ? 'ring-1 ring-[color:color-mix(in_srgb,var(--aura-4)_50%,transparent)]' : ''}`}>
+                  {date.getDate()}
+                </div>
+                <div className="space-y-0.5 overflow-hidden">
+                  {dateEvents.slice(0, 3).map(event => (
+                    <div
+                      key={event.id}
+                      onClick={(e) => handleEventClick(event, e)}
+                      className={`text-[10px] px-1.5 py-0.5 rounded truncate ${COLORS.eventBg} ${COLORS.eventHover} cursor-pointer transition-colors`}
+                      title={event.summary}
+                    >
+                      {event.summary}
+                    </div>
+                  ))}
+                  {dateEvents.length > 3 && (
+                    <div className="text-[10px] text-gray-400 px-1.5">
+                      +{dateEvents.length - 3} more
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="space-y-1">
-                <label className="text-[7px] font-bold text-white/15 uppercase tracking-widest">Start Time</label>
-                <input 
-                  type="time"
-                  required
-                  value={startTime}
-                  onChange={e => setStartTime(e.target.value)}
-                  className="w-full bg-white/5 border border-white/5 rounded-lg px-2.5 py-1.5 text-[9px] text-white outline-none focus:border-rose-500/20"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2.5">
-              <div className="space-y-1">
-                <label className="text-[7px] font-bold text-white/15 uppercase tracking-widest">End Date</label>
-                <input 
-                  type="date"
-                  required
-                  value={endDate}
-                  onChange={e => setEndDate(e.target.value)}
-                  className="w-full bg-white/5 border border-white/5 rounded-lg px-2.5 py-1.5 text-[9px] text-white outline-none focus:border-rose-500/20"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[7px] font-bold text-white/15 uppercase tracking-widest">End Time</label>
-                <input 
-                  type="time"
-                  required
-                  value={endTime}
-                  onChange={e => setEndTime(e.target.value)}
-                  className="w-full bg-white/5 border border-white/5 rounded-lg px-2.5 py-1.5 text-[9px] text-white outline-none focus:border-rose-500/20"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-[7px] font-bold text-white/15 uppercase tracking-widest">Location</label>
-              <input 
-                value={location}
-                onChange={e => setLocation(e.target.value)}
-                className="w-full bg-white/5 border border-white/5 rounded-lg px-3 py-1.5 text-[9px] text-white outline-none focus:border-rose-500/20 placeholder:text-white/20"
-                placeholder="Where?"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-[7px] font-bold text-white/15 uppercase tracking-widest">Description</label>
-              <textarea 
-                value={description}
-                onChange={e => setDescription(e.target.value)}
-                className="w-full bg-white/5 border border-white/5 rounded-lg px-3 py-1.5 text-[9px] text-white outline-none h-16 resize-none focus:border-rose-500/20 placeholder:text-white/20"
-                placeholder="Details..."
-              />
-            </div>
-          </div>
-
-          <div className="pt-1 shrink-0">
-            <button 
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full py-2 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/20 rounded-xl text-[9px] font-bold uppercase tracking-widest text-rose-300/80 transition-all disabled:opacity-20 active:scale-[0.98]"
-            >
-              {isSubmitting ? 'Manifesting...' : (isEditing ? 'Seal Revision' : 'Manifest Event')}
-            </button>
-          </div>
-        </form>
-      )}
-
-      {/* Header */}
-      <div className="flex items-center justify-between shrink-0">
-        <h3 className="text-[10px] font-semibold uppercase tracking-widest text-white/30">Temporal Flux</h3>
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={() => { resetForm(); setIsAdding(true); }}
-            className="text-rose-400/60 hover:text-rose-400 transition-colors"
-            title="Add Event"
-          >
-            <span className="text-lg">+</span>
-          </button>
-          <button 
-            onClick={handleOpenCalendar}
-            className="text-rose-400/60 text-[9px] font-mono hover:text-rose-400 transition-colors"
-          >
-            {selectedDay.toLocaleDateString()}
-          </button>
+            );
+          })}
         </div>
       </div>
+    );
+  };
 
-      {/* Large Date Display */}
-      <div className="flex items-baseline gap-2 shrink-0">
-        <span className="text-5xl font-bold text-white/70 tracking-tight">{selectedDay.getDate()}</span>
-        <div className="flex flex-col">
-          <span className="text-sm font-medium text-rose-400/60">{dayNames[selectedDay.getDay()]}</span>
-          <span className="text-[10px] text-white/25">{monthNames[selectedDay.getMonth()]} {selectedDay.getFullYear()}</span>
+  const renderWeekView = () => {
+    const days = getDaysForView();
+    const hourSlots = getHourSlots();
+
+    return (
+      <div className="flex-1 flex overflow-hidden">
+        <div className="w-14 pr-3 text-right bg-gray-50/40">
+          <div className="h-10" />
+          {hourSlots.map(hour => (
+            <div key={hour} className="h-16 text-[10px] text-gray-400 text-right pt-2 font-medium">
+              {formatHour(hour)}
+            </div>
+          ))}
+        </div>
+
+        <div className="flex-1">
+          <div className="grid h-full" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(120px, 1fr))` }}>
+            {days.map((date, idx) => (
+              <div key={idx} className={`text-center border-b ${COLORS.border}`}>
+                <div className={`text-[11px] font-medium py-2 uppercase tracking-wide ${isToday(date) ? 'text-[var(--aura-4)]' : 'text-gray-400'}`}>
+                  {date.toLocaleDateString('en-US', { weekday: 'short' })}
+                </div>
+                <div className={`text-lg font-semibold py-1 mb-1 ${isToday(date) ? 'text-[var(--aura-4)]' : 'text-gray-800'} ${isSelected(date) ? 'bg-[var(--aura-4)] text-white rounded-full w-8 h-8 mx-auto flex items-center justify-center' : ''}`}>
+                  {date.getDate()}
+                </div>
+              </div>
+            ))}
+
+            {hourSlots.map(hour => (
+              <div key={hour} className="contents">
+                {days.map((date, dayIdx) => {
+                  const dayEvents = getEventsForDate(date).filter(event => {
+                    if (!event.start.dateTime) return false;
+                    const eventStart = new Date(event.start.dateTime);
+                    const eventEnd = new Date(event.end?.dateTime || eventStart);
+                    return eventStart.getHours() <= hour && eventEnd.getHours() > hour;
+                  });
+
+                  return (
+                    <div
+                      key={dayIdx}
+                      onClick={() => handleDateClick(date, `${hour.toString().padStart(2, '0')}:00`)}
+                      className={`${COLORS.border} border-b border-r relative h-16 cursor-pointer transition-colors duration-150 hover:bg-gray-50/50 ${isSelected(date) ? 'bg-[color-mix(in_srgb,var(--aura-4)_5%,transparent)]' : ''}`}
+                    >
+                      {dayEvents.map(event => {
+                        const pos = getEventPosition(event);
+                        if (pos.top / 60 !== hour) return null;
+                        return (
+                          <div
+                            key={event.id}
+                            onClick={(e) => handleEventClick(event, e)}
+                            className="absolute left-0.5 right-0.5 bg-[color-mix(in_srgb,var(--aura-4)_18%,transparent)] border border-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] rounded px-1.5 py-1 text-[10px] text-gray-900 cursor-pointer hover:bg-[color-mix(in_srgb,var(--aura-4)_25%,transparent)] transition-colors pointer-events-auto group"
+                            style={{
+                              top: `${pos.top % 60}px`,
+                              height: `${Math.max(pos.height, 30)}px`
+                            }}
+                          >
+                            <div className="font-medium truncate">{event.summary}</div>
+                            {event.location && (
+                              <div className="text-[9px] text-gray-600 truncate">{event.location}</div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
+    );
+  };
 
-      {/* Mini Calendar Grid */}
-      <div className="grid grid-cols-7 gap-0.5 text-center shrink-0">
-        {dayNames.map(d => (
-          <div key={d} className="text-[8px] text-white/20 py-0.5">{d[0]}</div>
-        ))}
-        {days.map((day, i) => (
+  const renderDayView = () => {
+    const hourSlots = getHourSlots();
+    const dayEvents = getEventsForDate(selectedDate);
+    const now = new Date();
+    const isTodayDate = isSameDay(selectedDate, now);
+
+    // Calculate current time position (in minutes from midnight)
+    const getMinutesFromMidnight = (date: Date) => date.getHours() * 60 + date.getMinutes();
+    const nowMinutes = isTodayDate ? getMinutesFromMidnight(now) : -1;
+
+    // Event color mapping based on event type/keywords
+    const getEventColor = (event: CalendarEvent) => {
+      const title = event.summary.toLowerCase();
+      if (title.includes('team') || title.includes('sync')) return { gradient: 'from-violet-500/25 to-indigo-500/15', border: 'border-l-2 border-violet-500/50', accent: '#8b5cf6' };
+      if (title.includes('call') || title.includes('meeting')) return { gradient: 'from-sky-500/25 to-blue-500/15', border: 'border-l-2 border-sky-500/50', accent: '#0ea5e9' };
+      if (title.includes('lunch') || title.includes('break')) return { gradient: 'from-emerald-500/25 to-teal-500/15', border: 'border-l-2 border-emerald-500/50', accent: '#10b981' };
+      if (title.includes('review') || title.includes('code')) return { gradient: 'from-amber-500/25 to-orange-500/15', border: 'border-l-2 border-amber-500/50', accent: '#f59e0b' };
+      if (title.includes('van') || title.includes('fund')) return { gradient: 'from-fuchsia-500/25 to-pink-500/15', border: 'border-l-2 border-fuchsia-500/50', accent: '#d946ef' };
+      return { gradient: 'from-violet-500/25 to-indigo-500/15', border: 'border-l-2 border-violet-500/50', accent: '#8b5cf6' };
+    };
+
+    // Event icon (emoji based on keywords)
+    const getEventIcon = (event: CalendarEvent) => {
+      const title = event.summary.toLowerCase();
+      if (title.includes('team') || title.includes('sync')) return '🗓️';
+      if (title.includes('call') || title.includes('meeting')) return '📞';
+      if (title.includes('lunch') || title.includes('break') || title.includes('food')) return '🍽️';
+      if (title.includes('review') || title.includes('code')) return '👥';
+      if (title.includes('van') || title.includes('fund') || title.includes('money')) return '💰';
+      return '⚡';
+    };
+
+    return (
+      <div className="flex-1 flex overflow-hidden bg-white/5">
+        {/* Time labels column */}
+        <div className="w-20 pr-4 text-right flex-shrink-0 bg-white/5">
+          <div className="h-12" />
+          {hourSlots.map(hour => (
+            <div key={hour} className="h-[60px] text-[10px] text-gray-500 text-right pr-2 pt-2 font-mono leading-none">
+              {formatHour(hour)}
+            </div>
+          ))}
+        </div>
+
+        {/* Main timeline area */}
+        <div className="flex-1 relative">
+          {/* Hour grid lines */}
+          {hourSlots.map(hour => (
+            <div key={hour} className="h-[60px] border-b border-gray-200/10 relative" />
+          ))}
+
+          {/* NOW indicator */}
+          {isTodayDate && nowMinutes >= 0 && (
+            <div
+              className="absolute left-0 right-0 z-20 pointer-events-none"
+              style={{ top: `${nowMinutes}px` }}
+            >
+              <div className="absolute inset-0 bg-rose-500/90 h-0.5 -translate-y-1/2 shadow-[0_0_8px_rgba(244,63,94,0.8)]" />
+              <div className="absolute right-2 -top-5 bg-rose-500 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md shadow-lg">
+                NOW
+              </div>
+            </div>
+          )}
+
+          {/* All-day events section */}
+          <div className="absolute top-0 left-2 right-2 z-10 bg-gradient-to-b from-white/80 via-white/70 to-transparent backdrop-blur-sm p-3 border-b border-gray-200/30">
+            <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-2">All-day Events</div>
+            {dayEvents.filter(e => e.start.date).map(event => {
+              const color = getEventColor(event);
+              return (
+                <div
+                  key={event.id}
+                  onClick={(e) => { e.stopPropagation(); handleEventClick(event, e); }}
+                  className={`mb-2 p-2.5 bg-gradient-to-r ${color.gradient} ${color.border} rounded-lg text-gray-900 cursor-pointer hover:brightness-105 transition-all group backdrop-blur-sm shadow-sm`}
+                >
+                  <div className="font-semibold text-sm flex items-center gap-2">
+                    <span className="text-base">{getEventIcon(event)}</span>
+                    <span className="truncate">{event.summary}</span>
+                  </div>
+                  {event.location && (
+                    <div className="text-xs text-gray-600 mt-1 flex items-center gap-1 ml-6">
+                      <span>📍</span>{event.location}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Timed events */}
+          {dayEvents.filter(e => e.start.dateTime).map(event => {
+            const pos = getEventPosition(event);
+            const color = getEventColor(event);
+            const startTime = new Date(event.start.dateTime);
+            const endTime = event.end?.dateTime ? new Date(event.end.dateTime) : startTime;
+            const timeDisplay = `${startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} – ${endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+
+            return (
+              <div
+                key={event.id}
+                onClick={(e) => { e.stopPropagation(); handleEventClick(event, e); }}
+                className={`absolute left-1 right-1 z-10 bg-gradient-to-r ${color.gradient} ${color.border} rounded-lg p-2 cursor-pointer hover:brightness-110 transition-all group backdrop-blur-sm shadow-lg hover:shadow-xl`}
+                style={{
+                  top: `${pos.top}px`,
+                  height: `${Math.max(pos.height, 32)}px`
+                }}
+              >
+                <div className="flex items-start gap-2">
+                  <span className="text-lg flex-shrink-0 mt-0.5">{getEventIcon(event)}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-sm text-gray-900 truncate group-hover:text-gray-950">
+                      {event.summary}
+                    </div>
+                    <div className="text-xs text-gray-600 mt-0.5 flex items-center gap-1">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      {timeDisplay}
+                    </div>
+                    {event.location && (
+                      <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-1 truncate">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        <span className="truncate">{event.location}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Click-to-add overlay (only if no all-day events to avoid overlap) */}
           <div
-            key={i}
-            onClick={() => day && handleDayClick(day)}
-            className={`text-[9px] py-0.5 rounded transition-all cursor-pointer min-h-[1.75rem] flex items-center justify-center ${
-              day 
-                ? isSelected(day)
-                  ? 'bg-rose-500/40 text-white font-medium shadow-sm'
-                  : isToday(day)
-                    ? 'text-rose-300/60 font-medium'
-                    : 'text-white/35 hover:text-white/55 hover:bg-white/5'
-                : ''
+            className="absolute inset-0"
+            onClick={() => openCreateModal(selectedDate)}
+          />
+        </div>
+      </div>
+    );
+  };
+
+  if (loading) {
+    return (
+      <div className={`${COLORS.bg} rounded-2xl border ${COLORS.border} ${COLORS.shadow} p-12 flex items-center justify-center`}>
+        <div className="text-center space-y-3">
+          <div className="w-8 h-8 border-2 border-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] border-t-[var(--aura-4)] rounded-full animate-spin mx-auto" />
+          <div className="text-sm font-medium text-gray-500">Loading events…</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`${COLORS.bg} rounded-2xl border ${COLORS.border} ${COLORS.shadow} overflow-hidden transition-all duration-300 ${isAnimating ? 'opacity-80 scale-[0.997]' : 'opacity-100 scale-100'}`}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200/50 bg-white/80">
+        <div className="flex items-center gap-4">
+          {/* Back button (shown when not in month view) */}
+          {(view === 'day' || view === 'week') && (
+            <button
+              onClick={() => setView('month')}
+              className="w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 border border-gray-200/60 flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+              aria-label="Back to month view"
+            >
+              <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+            </button>
+          )}
+
+          <div className="flex gap-1">
+            <button
+              onClick={navigatePrevious}
+              className="w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 border border-gray-200/60 flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+              aria-label="Previous"
+            >
+              <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <button
+              onClick={navigateNext}
+              className="w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 border border-gray-200/60 flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+              aria-label="Next"
+            >
+              <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          </div>
+
+          <button
+            onClick={navigateToday}
+            disabled={isCurrentPeriod}
+            className={`px-4 py-1.5 text-xs font-medium uppercase tracking-wide rounded-full transition-all ${
+              isCurrentPeriod
+                ? 'bg-transparent text-transparent'
+                : `${COLORS.accent} ${COLORS.accentHover}`
             }`}
           >
-            {day || ''}
-          </div>
-        ))}
+            Today
+          </button>
+
+          <h2 className="text-base font-semibold text-gray-900 min-w-[160px] text-center tracking-tight">
+            {formatDateDisplay()}
+          </h2>
+        </div>
+
+        {/* View Selector */}
+        <div className="flex bg-gray-100/70 rounded-lg p-1 border border-gray-200/40">
+          {(['month', 'week', 'day'] as const).map(v => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={`px-4 py-1.5 text-xs font-medium uppercase tracking-wide rounded-md transition-all ${
+                view === v
+                  ? 'bg-white text-gray-900 shadow-sm border border-gray-200/60'
+                  : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
+              }`}
+            >
+              {v}
+            </button>
+          ))}
+        </div>
+
+        {/* Add Event Button */}
+        <button
+          onClick={() => openCreateModal()}
+          className="w-10 h-10 rounded-full bg-[var(--aura-4)] hover:brightness-75 text-white flex items-center justify-center transition-all hover:scale-105 active:scale-95 shadow-lg shadow-[color:color-mix(in_srgb,var(--aura-4)_20%,transparent)]"
+          aria-label="Add event"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+        </button>
       </div>
 
-      {/* Events List */}
-      <div className="flex-1 overflow-y-auto space-y-1.5 mt-1 scrollbar-thin scrollbar-thumb-white/5 scrollbar-track-transparent">
-        <div className="flex items-center justify-between mb-1.5">
-          <h4 className="text-[8px] font-bold uppercase tracking-widest text-white/20">Upcoming Disturbances</h4>
-          <button onClick={onRefresh} className="text-[7px] text-white/15 hover:text-white/25 transition-colors">Refresh</button>
-        </div>
-        {filteredEvents.length === 0 ? (
-          <div className="text-[9px] text-white/15 italic">No aetheric disturbances.</div>
-        ) : (
-          filteredEvents.slice(0, 5).map(event => (
-            <div 
-              key={event.id} 
-              onClick={() => setSelectedEvent(event)}
-              className="bg-white/3 rounded-md p-2 border border-white/3 hover:bg-white/6 hover:border-rose-500/15 transition-all cursor-pointer group/item"
-            >
-              <div className="text-[9px] font-medium text-white/60 group-hover/item:text-rose-300/70 truncate transition-colors">{event.summary}</div>
-              <div className="text-[7px] text-white/20 mt-0.5">{formatEventTime(event)}</div>
-            </div>
-          ))
-        )}
+      {/* Calendar Content */}
+      <div className="flex-1 overflow-hidden">
+        {view === 'month' && renderMonthView()}
+        {view === 'week' && renderWeekView()}
+        {view === 'day' && renderDayView()}
       </div>
+
+      {/* Event Modal */}
+      {showModal && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className={`${COLORS.bg} backdrop-blur-2xl rounded-2xl shadow-2xl w-full max-w-md border ${COLORS.border} overflow-hidden transition-all duration-300`}>
+            <div className={`flex items-center justify-between px-5 py-4 border-b ${COLORS.border}`}>
+              <h3 className="text-base font-semibold text-gray-900">
+                {editingEvent ? 'Edit Event' : 'New Event'}
+              </h3>
+              <button
+                onClick={() => { setShowModal(false); resetForm(); }}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">
+                  Title
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
+                  placeholder="Add title"
+                />
+              </div>
+
+              <div className="flex items-center justify-between py-1">
+                <label className="text-xs font-medium text-gray-600 uppercase tracking-wider">
+                  All-day
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setIsAllDay(!isAllDay)}
+                  className={`relative w-11 h-6 rounded-full transition-colors ${
+                    isAllDay ? 'bg-[var(--aura-4)]' : 'bg-gray-300'
+                  }`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                    isAllDay ? 'translate-x-5' : 'translate-x-0'
+                  }`} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">
+                    {isAllDay ? 'Date' : 'Start'}
+                  </label>
+                  <input
+                    type={isAllDay ? 'date' : 'datetime-local'}
+                    required
+                    value={startDateTime.split('T')[0]}
+                    onChange={(e) => {
+                      if (isAllDay) {
+                        setStartDateTime(e.target.value);
+                      } else {
+                        setStartDateTime(e.target.value);
+                      }
+                    }}
+                    className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
+                  />
+                </div>
+                {!isAllDay && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">
+                      Time
+                    </label>
+                    <input
+                      type="time"
+                      required
+                      value={startDateTime.split('T')[1]?.slice(0, 5) || ''}
+                      onChange={(e) => {
+                        const [date] = startDateTime.split('T');
+                        setStartDateTime(`${date}T${e.target.value}:00`);
+                      }}
+                      className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">
+                    {isAllDay ? 'End date' : 'End'}
+                  </label>
+                  <input
+                    type={isAllDay ? 'date' : 'datetime-local'}
+                    required
+                    value={endDateTime.split('T')[0]}
+                    onChange={(e) => {
+                      if (isAllDay) {
+                        setEndDateTime(e.target.value);
+                      } else {
+                        setEndDateTime(e.target.value);
+                      }
+                    }}
+                    className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
+                  />
+                </div>
+                {!isAllDay && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">
+                      Time
+                    </label>
+                    <input
+                      type="time"
+                      required
+                      value={endDateTime.split('T')[1]?.slice(0, 5) || ''}
+                      onChange={(e) => {
+                        const [date] = endDateTime.split('T');
+                        setEndDateTime(`${date}T${e.target.value}:00`);
+                      }}
+                      className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">
+                  Location
+                </label>
+                <input
+                  type="text"
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
+                  placeholder="Add location"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">
+                  Description
+                </label>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={3}
+                  className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 resize-none focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
+                  placeholder="Add description"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="flex-1 py-2.5 bg-[var(--aura-4)] hover:brightness-75 disabled:brightness-50 disabled:opacity-60 text-white rounded-xl text-sm font-medium transition-all disabled:cursor-not-allowed shadow-lg shadow-[color:color-mix(in_srgb,var(--aura-4)_20%,transparent)]"
+                >
+                  {isSubmitting ? 'Saving…' : editingEvent ? 'Save Changes' : 'Add Event'}
+                </button>
+                {editingEvent && (
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    disabled={isSubmitting}
+                    className="px-5 py-2.5 bg-[color-mix(in_srgb,var(--aura-4)_5%,transparent)] hover:bg-[color-mix(in_srgb,var(--aura-4)_10%,transparent)] text-[var(--aura-4)] border border-[color:color-mix(in_srgb,var(--aura-4)_10%,transparent)] rounded-xl text-sm font-medium transition-all disabled:cursor-not-allowed"
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1065,10 +1558,9 @@ const App: React.FC = () => {
   const [sidebarsCollapsed, setSidebarsCollapsed] = useState(true);
 
   // ─── Data Fetching ─────────────────────────────────────────────────────────────
-  const fetchAllData = useCallback(async () => {
-    const [msgs, chat, wthr, fund, github, cal, grimoire] = await Promise.all([
+  const fetchAllNonChatData = useCallback(async () => {
+    const [msgs, wthr, fund, github, cal, grimoire] = await Promise.all([
       getPiMessages(),
-      getChatHistory(),
       getMarketWeather(),
       getVanFundData(),
       getGithubActivity(),
@@ -1076,7 +1568,6 @@ const App: React.FC = () => {
       getGrimoire()
     ]);
     setPiMessages(msgs);
-    setChatHistory(chat);
     setWeather(wthr);
     setVanFund(fund);
     setGithubActivity(github);
@@ -1108,8 +1599,14 @@ const App: React.FC = () => {
     }));
   }, [apps.length]);
 
-  useEffect(() => { fetchAllData(); }, [fetchAllData]);
-  useInterval(fetchAllData, 10000);
+  const fetchChatHistory = useCallback(async () => {
+    const chat = await getChatHistory(selectedAgent);
+    setChatHistory(chat);
+  }, [selectedAgent]);
+
+  useEffect(() => { fetchAllNonChatData(); }, [fetchAllNonChatData]);
+  useEffect(() => { fetchChatHistory(); }, [fetchChatHistory]);
+  useInterval(fetchAllNonChatData, 10000);
   useInterval(fetchTodos, 5000);
 
   // ─── Keyboard Shortcuts ────────────────────────────────────────────────────────
@@ -1197,13 +1694,26 @@ const App: React.FC = () => {
     try {
       const result = await sendChatMessage(text, selectedAgent);
       if (result.success && result.piResponse) {
+        // Success: keep user message, add Pi's response
         setChatHistory(prev => [...prev.slice(0, -1), userMsg, result.piResponse!]);
       } else if (result.piResponse) {
-        // Error case but we still have a response
+        // API returned a response even though success=false (edge case)
         setChatHistory(prev => [...prev.slice(0, -1), userMsg, result.piResponse!]);
+      } else {
+        // No response at all: remove optimistic user message and add error
+        setChatHistory(prev => [...prev.slice(0, -1)]);
+        const errorMsg: ChatMessage = {
+          id: `error-${Date.now()}`,
+          role: 'assistant',
+          text: result.error || 'The aether remained silent... please try again.',
+          time: Date.now(),
+          isError: true
+        };
+        setChatHistory(prev => [...prev, errorMsg]);
       }
     } catch (error) {
-      // Add error message
+      // Network or unexpected error: remove optimistic user message and add error
+      setChatHistory(prev => [...prev.slice(0, -1)]);
       const errorMsg: ChatMessage = {
         id: `error-${Date.now()}`,
         role: 'assistant',
@@ -1215,7 +1725,7 @@ const App: React.FC = () => {
     } finally {
       setIsChatLoading(false);
     }
-  }, []);
+  }, [selectedAgent]);
 
   const handleClearChat = useCallback(async () => {
     const history = await clearChatHistory();
@@ -1350,7 +1860,7 @@ const App: React.FC = () => {
 
                 {/* Main Calendar View */}
                 <div className="mb-12">
-                   <TemporalFluxCell events={calendarEvents} onRefresh={fetchAllData} />
+                   <TemporalFluxCell events={calendarEvents} onRefresh={fetchAllNonChatData} />
                 </div>
 
                 {/* App Grimoire Section */}
@@ -1363,6 +1873,11 @@ const App: React.FC = () => {
                        setContextMenu({ x: e.clientX, y: e.clientY, app });
                      }} 
                    />
+                </div>
+
+                {/* Todo Board */}
+                <div className="mb-12">
+                   <TodoBoardCell />
                 </div>
 
                 {/* Popular / Active Missions (Slider Area) */}
