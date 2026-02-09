@@ -1,5 +1,5 @@
 
-// Todo/Status Tracking Types
+// Todo/Status Tracking Types (per-app)
 export interface TodoTask {
   id?: string;
   text: string;
@@ -27,6 +27,47 @@ export interface TodoData {
   blocked: TodoTask[];
   completed: TodoTask[];
   backlog: TodoTask[];
+  totalTasks: number;
+  completedCount: number;
+  progressPercent: number;
+}
+
+// ============================================
+// Dashboard Global Todo Board Types
+// ============================================
+
+export type DashboardTaskStatus = 'todo' | 'in-progress' | 'blocked' | 'done';
+export type DashboardTaskPriority = 'critical' | 'high' | 'medium' | 'low';
+
+export interface DashboardTask {
+  id: string;
+  title: string;
+  priority: DashboardTaskPriority;
+  tags: string[];
+  estimate?: string; // e.g., "4h"
+  status: DashboardTaskStatus;
+  created: string; // ISO date
+  started?: string;
+  completed?: string;
+  progress?: number; // 0-100
+  assigned_to?: string; // agent name
+  agent?: string; // alias
+  description?: string;
+  results?: string; // execution logs
+  dependencies?: string[];
+  section: string; // parent markdown heading (exact text)
+  order: number; // order within section
+}
+
+export interface TodoSection {
+  title: string; // markdown heading including ## markers
+  tasks: DashboardTask[];
+}
+
+export interface TodoBoardData {
+  sections: TodoSection[];
+  // helper maps
+  taskById: Map<string, DashboardTask>;
   totalTasks: number;
   completedCount: number;
   progressPercent: number;

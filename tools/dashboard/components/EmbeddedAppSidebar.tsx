@@ -21,8 +21,8 @@ const EmbeddedAppSidebar: React.FC<EmbeddedAppSidebarProps> = ({
     const sidebarRef = useRef<HTMLDivElement>(null);
     const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-    // Filter to only show embedded apps that are currently online
-    const embeddedApps = apps.filter(app => app.isEmbedded && app.isOnline);
+    // Filter to only show embedded apps (both online and offline)
+    const embeddedApps = apps.filter(app => app.isEmbedded);
 
     useEffect(() => {
         onVisibilityChange?.(isExpanded);

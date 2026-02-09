@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { spawn } from 'child_process';
+import { spawn, execFile } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { google } from 'googleapis';
@@ -18,7 +18,11 @@ const PI_ROOT = 'D:\\Pi';
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-app.use(cors());
+app.use(cors({
+    origin: '*',
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
+}));
 app.use(express.json());
 
 // Store running processes
@@ -29,10 +33,13 @@ let piMessages = [
     { id: 'welcome', text: 'The bridge is open, Grand Architect. Pi is listening.', type: 'info', time: Date.now() }
 ];
 
-// Chat History (actual bidirectional conversation with Pi)
-let chatHistory = [
-    { id: 'system-welcome', role: 'assistant', text: 'The bridge is open, Grand Architect. How may I assist you?', time: Date.now() }
-];
+// Chat Histories - one per agent (isolated sessions)
+const chatHistories = {
+    'dashboard': [
+        { id: 'system-welcome', role: 'assistant', text: 'The bridge is open, Grand Architect. How may I assist you?', time: Date.now() }
+    ]
+    // Other agents start empty; will be created on first message
+};
 
 // Ensure mockups directory exists
 const MOCKUPS_DIR = path.join(PI_ROOT, 'tools', 'dashboard', 'apps', 'code-preview', 'saved', 'mockups');
@@ -84,6 +91,60 @@ const OPENCLAW_GATEWAY = {
     baseUrl: process.env.OPENCLAW_GATEWAY_URL || 'http://127.0.0.1:18789',
     token: resolveOpenClawToken()
 };
+
+/**
+ * Spawn a background agent session via OpenClaw Gateway
+ * Uses the `openclaw gateway call sessions_spawn` CLI
+ */
+async function spawnAgentSession(task, agentId, model, instructions) {
+    // Build the task description for the agent
+    const taskDescription = `Execute task: ${task.title}\n\nDescription: ${task.description || 'No description provided.'}\n\nAdditional instructions: ${instructions || 'No additional instructions.'}`;
+
+    const params = {
+        task: taskDescription,
+        agentId: agentId || 'pi',
+        label: `Todo: ${task.title}`
+    };
+    if (model) params.model = model;
+
+    // Resolve the openclaw command path
+    let openclawCmd;
+    if (process.platform === 'win32') {
+        const npmPrefix = process.env.npm_config_prefix || 'C:\\nvm4w\\nodejs';
+        openclawCmd = path.join(npmPrefix, 'openclaw.cmd');
+    } else {
+        openclawCmd = 'openclaw';
+    }
+
+    return new Promise((resolve) => {
+        execFile(openclawCmd, ['gateway', 'call', 'sessions_spawn', '--params', JSON.stringify(params)], { maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+            if (error) {
+                console.error('Failed to spawn agent session:', error);
+                console.error('stderr:', stderr);
+                return resolve({ success: false, error: error.message });
+            }
+            try {
+                // The CLI outputs JSON with result/error fields
+                const output = stdout.toString().trim();
+                const result = JSON.parse(output);
+                if (result.error) {
+                    console.error('Gateway call error:', result.error);
+                    resolve({ success: false, error: result.error });
+                } else {
+                    const sessionId = result.result?.sessionId;
+                    if (sessionId) {
+                        resolve({ success: true, sessionId });
+                    } else {
+                        resolve({ success: false, error: 'No sessionId returned' });
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to parse gateway response:', e);
+                resolve({ success: false, error: 'Invalid response from gateway' });
+            }
+        });
+    });
+}
 
 // GitHub API Config
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
@@ -356,12 +417,32 @@ async function getCalendarEventsInternal(calendarId = DEFAULT_CALENDAR_ID) {
         const res = await calendar.events.list({
             calendarId: calendarId,
             timeMin: new Date().toISOString(),
-            maxResults: 15,
+            maxResults: 50, // Increased to capture more events for busyness
             singleEvents: true,
             orderBy: 'startTime',
         });
 
-        return { success: true, events: res.data.items || [] };
+        const events = (res.data.items || []).map(event => {
+            // Extract category from extendedProperties if present
+            const category = event.extendedProperties?.private?.category;
+            return {
+                id: event.id,
+                summary: event.summary,
+                start: {
+                    dateTime: event.start?.dateTime,
+                    date: event.start?.date
+                },
+                end: {
+                    dateTime: event.end?.dateTime,
+                    date: event.end?.date
+                },
+                description: event.description,
+                location: event.location,
+                ...(category && { category })
+            };
+        });
+
+        return { success: true, events };
     } catch (error) {
         console.error('Error fetching calendar events:', error);
         return { success: false, error: error.message };
@@ -385,9 +466,20 @@ app.post('/api/pi/calendar/event', async (req, res) => {
             scopes: ['https://www.googleapis.com/auth/calendar'],
         });
         const calendar = google.calendar({ version: 'v3', auth });
+
+        // Inject category into extendedProperties if present
+        const eventBody = { ...event };
+        if (event.category) {
+            eventBody.extendedProperties = {
+                private: {
+                    category: event.category
+                }
+            };
+        }
+
         const response = await calendar.events.insert({
             calendarId,
-            requestBody: event,
+            requestBody: eventBody,
         });
         res.json({ success: true, event: response.data });
     } catch (error) {
@@ -405,10 +497,21 @@ app.put('/api/pi/calendar/event/:eventId', async (req, res) => {
             scopes: ['https://www.googleapis.com/auth/calendar'],
         });
         const calendar = google.calendar({ version: 'v3', auth });
+
+        // Inject category into extendedProperties if present
+        const eventBody = { ...event };
+        if (event.category) {
+            eventBody.extendedProperties = {
+                private: {
+                    category: event.category
+                }
+            };
+        }
+
         const response = await calendar.events.update({
             calendarId,
             eventId,
-            requestBody: event,
+            requestBody: eventBody,
         });
         res.json({ success: true, event: response.data });
     } catch (error) {
@@ -512,15 +615,25 @@ app.post('/api/pi/weather', (req, res) => {
 // Pi Chat API (Real conversation with OpenClaw)
 // ============================================
 
-// Get chat history
+// Get chat history (optionally filtered by agent)
 app.get('/api/pi/chat', (req, res) => {
-    res.json(chatHistory);
+    let agentId = req.query.agentId;
+    if (Array.isArray(agentId)) agentId = agentId[0];
+    if (!agentId) agentId = 'dashboard';
+    const history = chatHistories[agentId] || chatHistories['dashboard'] || [];
+    res.json(history);
 });
 
 // Send message to Pi and get response
 app.post('/api/pi/chat', async (req, res) => {
     const { message, agentId = 'dashboard' } = req.body;
     if (!message) return res.status(400).json({ error: 'Message is required' });
+
+    // Ensure this agent has a history array
+    if (!chatHistories[agentId]) {
+        chatHistories[agentId] = [];
+    }
+    const history = chatHistories[agentId];
 
     // Add user message to history
     const userMessage = {
@@ -529,7 +642,39 @@ app.post('/api/pi/chat', async (req, res) => {
         text: message,
         time: Date.now()
     };
-    chatHistory.push(userMessage);
+    history.push(userMessage);
+
+    // LITE MODE: "render test" interceptor
+    if (message.toLowerCase().trim() === 'render test') {
+        const testCode = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; background: #0c0c0c; color: #00f2ff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; overflow: hidden; }
+        .box { width: 100px; height: 100px; background: #8b5cf6; border-radius: 20px; animation: spin 4s linear infinite; box-shadow: 0 0 30px #8b5cf6; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        h1 { font-size: 1rem; text-transform: uppercase; letter-spacing: 2px; margin-top: 20px; text-shadow: 0 0 10px #00f2ff; }
+    </style>
+</head>
+<body>
+    <div class="box"></div>
+    <h1>Test Manifested</h1>
+</body>
+</html>`;
+        
+        const piResponse = {
+            id: `pi-test-${Date.now()}`,
+            role: 'assistant',
+            text: 'Behold, the Lite-Manifestation! The render engine is operational and verified.',
+            time: Date.now(),
+            previewCode: testCode
+        };
+        history.push(piResponse);
+        return res.json({ success: true, userMessage, piResponse, history });
+    }
 
     try {
         // Call OpenClaw Gateway OpenResponses API
@@ -548,7 +693,7 @@ app.post('/api/pi/chat', async (req, res) => {
 
         // Timeout for gateway response (don't block forever)
         const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Gateway timeout')), 30000)
+            setTimeout(() => reject(new Error('Gateway timeout')), 90000) // 90 seconds
         );
 
         const response = await Promise.race([responsePromise, timeoutPromise]);
@@ -559,12 +704,14 @@ app.post('/api/pi/chat', async (req, res) => {
         }
 
         const data = await response.json();
-        
+
         // Extract content from OpenResponses format
         let outputText = data.output?.[0]?.content?.[0]?.text || 'I received your message but had trouble responding.';
+        let reasoning = data.reasoning || data.thoughts || data.output?.[0]?.reasoning || null; // Capture thought process
         let previewUrl = null;
+        let previewCode = null;
 
-        // Detect HTML/Code blocks for Astral Preview
+        // Detect HTML/Code blocks for inline preview
         const codeBlockRegex = /```(?:html|xml)?\s*([\s\S]*?)```/i;
         const match = outputText.match(codeBlockRegex);
 
@@ -574,10 +721,10 @@ app.post('/api/pi/chat', async (req, res) => {
             if (code.includes('<') && (code.includes('</') || code.includes('/>'))) {
                 const filename = `preview-${crypto.randomUUID().slice(0, 8)}.html`;
                 const fullPath = path.join(MOCKUPS_DIR, filename);
-                
+
                 // Wrap in boilerplate if it's just a fragment
                 let html = code;
-                if (!code.toLowerCase().includes('<!doctype') && !code.toLowerCase().includes('<html')) {
+                if (!code.toLowerCase().includes('<!doctype') && !code.toLowerCase().includes('<html>')) {
                     html = `<!DOCTYPE html>
 <html>
 <head>
@@ -593,9 +740,11 @@ app.post('/api/pi/chat', async (req, res) => {
 </body>
 </html>`;
                 }
-                
+
                 fs.writeFileSync(fullPath, html);
                 previewUrl = `http://localhost:3005/mockups/${filename}`;
+                // Also return raw HTML for inline CodePreview
+                previewCode = html;
             }
         }
 
@@ -604,21 +753,23 @@ app.post('/api/pi/chat', async (req, res) => {
             id: `pi-${Date.now()}`,
             role: 'assistant',
             text: outputText,
+            reasoning: reasoning, // Store the thought process
             time: Date.now(),
-            previewUrl
+            previewUrl,
+            previewCode
         };
-        chatHistory.push(piResponse);
+        history.push(piResponse);
 
         // Keep history manageable (last 50 messages)
-        if (chatHistory.length > 50) {
-            chatHistory = chatHistory.slice(-50);
+        if (history.length > 50) {
+            chatHistories[agentId] = history.slice(-50);
         }
 
         res.json({ 
             success: true, 
             userMessage,
             piResponse,
-            history: chatHistory 
+            history: history 
         });
 
     } catch (error) {
@@ -632,23 +783,25 @@ app.post('/api/pi/chat', async (req, res) => {
             time: Date.now(),
             isError: true
         };
-        chatHistory.push(errorResponse);
+        history.push(errorResponse);
 
         res.status(500).json({ 
             success: false, 
             error: error.message,
             piResponse: errorResponse,
-            history: chatHistory
+            history: history
         });
     }
 });
 
-// Clear chat history
+// Clear chat history (per agent)
 app.delete('/api/pi/chat', (req, res) => {
-    chatHistory = [
-        { id: 'system-welcome', role: 'assistant', text: 'The bridge is open, Grand Architect. How may I assist you?', time: Date.now() }
-    ];
-    res.json({ success: true, history: chatHistory });
+    let agentId = req.query.agentId;
+    if (Array.isArray(agentId)) agentId = agentId[0];
+    if (!agentId) agentId = 'dashboard';
+    const initialMessage = { id: 'system-welcome', role: 'assistant', text: 'The bridge is open, Grand Architect. How may I assist you?', time: Date.now() };
+    chatHistories[agentId] = [initialMessage];
+    res.json({ success: true, history: chatHistories[agentId] });
 });
 
 // ============================================
@@ -968,6 +1121,352 @@ app.post('/api/todos', (req, res) => {
     }
 
     res.json(results);
+});
+
+// ============================================
+// Dashboard Global Todo Board API
+// ============================================
+
+const TODO_DASHBOARD_FILE = path.join(process.cwd(), 'todo.md');
+
+function parseDashboardTodo(content) {
+    const frontmatterRegex = /^---\s*\n([\s\S]*?)\n---/m;
+    const frontmatterMatch = content.match(frontmatterRegex);
+    let frontmatter = '';
+    let body = content;
+    if (frontmatterMatch) {
+        frontmatter = frontmatterMatch[1];
+        body = content.slice(frontmatterMatch[0].length);
+    }
+
+    const lines = body.split('\n');
+    const sections = [];
+    let currentSection = null;
+    let i = 0;
+
+    while (i < lines.length) {
+        const line = lines[i];
+        const headingMatch = line.match(/^(#+)\s+(.+)$/);
+        if (headingMatch) {
+            currentSection = { title: line, tasks: [] };
+            sections.push(currentSection);
+            i++;
+            continue;
+        }
+
+        if (line.trim() === '[task]') {
+            let blockLines = [];
+            i++;
+            while (i < lines.length && lines[i].trim() !== '[/task]') {
+                blockLines.push(lines[i]);
+                i++;
+            }
+            if (blockLines.length > 0 && currentSection) {
+                const task = parseTaskBlock(blockLines.join('\n'));
+                if (task) {
+                    task.order = currentSection.tasks.length;
+                    currentSection.tasks.push(task);
+                }
+            }
+            i++; // skip [/task]
+            continue;
+        }
+
+        i++;
+    }
+
+    return { frontmatter, sections };
+}
+
+function parseTaskBlock(blockText) {
+    const lines = blockText.split('\n').filter(l => l.trim() !== '');
+    const task = {};
+    for (const line of lines) {
+        const m = line.match(/^(\w+):\s*(.+)$/);
+        if (!m) continue;
+        let key = m[1];
+        let value = m[2].trim();
+
+        switch (key) {
+            case 'id':
+                task.id = value;
+                break;
+            case 'title':
+                task.title = value;
+                break;
+            case 'priority':
+                task.priority = value;
+                break;
+            case 'tags':
+                if (value.startsWith('[') && value.endsWith(']')) value = value.slice(1, -1);
+                task.tags = value.split(',').map(t => t.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
+                break;
+            case 'estimate':
+                task.estimate = value;
+                break;
+            case 'status':
+                task.status = value;
+                break;
+            case 'created':
+                task.created = value;
+                break;
+            case 'started':
+                task.started = value;
+                break;
+            case 'completed':
+                task.completed = value;
+                break;
+            case 'progress':
+                task.progress = parseInt(value, 10);
+                if (isNaN(task.progress)) task.progress = undefined;
+                break;
+            case 'assigned_to':
+            case 'agent':
+                task.assigned_to = value;
+                break;
+            case 'description':
+                task.description = value;
+                break;
+            case 'results':
+                task.results = value;
+                break;
+            case 'dependencies':
+                if (value.startsWith('[') && value.endsWith(']')) value = value.slice(1, -1);
+                task.dependencies = value.split(',').map(t => t.trim()).filter(Boolean);
+                break;
+        }
+    }
+    if (!task.id || !task.title || !task.status) return null;
+    return task;
+}
+
+function writeDashboardTodo(data) {
+    const { frontmatter, sections } = data;
+    let content = '---\n' + frontmatter + '\n---\n\n';
+    for (const section of sections) {
+        content += section.title + '\n\n';
+        for (const task of section.tasks) {
+            content += '[task]\n';
+            const fields = ['id', 'title', 'priority', 'tags', 'estimate', 'status', 'created', 'started', 'completed', 'progress', 'assigned_to', 'agent', 'description', 'results', 'dependencies'];
+            for (const field of fields) {
+                if (task[field] !== undefined && task[field] !== null && task[field] !== '') {
+                    let v = task[field];
+                    if (Array.isArray(v)) {
+                        v = '[' + v.map(item => typeof item === 'string' && item.includes(' ') ? `"${item}"` : item).join(', ') + ']';
+                    }
+                    content += `${field}: ${v}\n`;
+                }
+            }
+            content += '[/task]\n\n';
+        }
+        content += '\n';
+    }
+    return content;
+}
+
+function generateTodoId(sections) {
+    let max = 0;
+    for (const sec of sections) {
+        for (const t of sec.tasks) {
+            const num = parseInt(t.id, 10);
+            if (!isNaN(num) && num > max) max = num;
+        }
+    }
+    return String(max + 1).padStart(3, '0');
+}
+
+function findTaskIndex(sections, id) {
+    for (let i = 0; i < sections.length; i++) {
+        const idx = sections[i].tasks.findIndex(t => t.id === id);
+        if (idx !== -1) return { sectionIndex: i, taskIndex: idx };
+    }
+    return null;
+}
+
+function loadTodoBoard() {
+    try {
+        if (!fs.existsSync(TODO_DASHBOARD_FILE)) return { frontmatter: '', sections: [] };
+        const content = fs.readFileSync(TODO_DASHBOARD_FILE, 'utf8');
+        return parseDashboardTodo(content);
+    } catch (e) {
+        console.error('Error loading todo board:', e);
+        return { frontmatter: '', sections: [] };
+    }
+}
+
+function saveTodoBoard(data) {
+    try {
+        const content = writeDashboardTodo(data);
+        const tempPath = TODO_DASHBOARD_FILE + '.tmp';
+        fs.writeFileSync(tempPath, content, 'utf8');
+        fs.renameSync(tempPath, TODO_DASHBOARD_FILE);
+        return true;
+    } catch (e) {
+        console.error('Error saving todo board:', e);
+        return false;
+    }
+}
+
+// Dashboard Global Todo Board Endpoints
+
+app.get('/api/pi/todos', (req, res) => {
+    try {
+        const data = loadTodoBoard();
+        let total = 0, completed = 0;
+        for (const sec of data.sections) {
+            total += sec.tasks.length;
+            completed += sec.tasks.filter(t => t.status === 'done').length;
+        }
+        const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
+        res.json({ sections: data.sections, totalTasks: total, completedCount: completed, progressPercent: progress });
+    } catch (e) {
+        console.error('Error fetching todos:', e);
+        res.status(500).json({ error: 'Failed to fetch todos' });
+    }
+});
+
+app.patch('/api/pi/todos/:id', (req, res) => {
+    const { id } = req.params;
+    const updates = req.body;
+    try {
+        const data = loadTodoBoard();
+        const found = findTaskIndex(data.sections, id);
+        if (!found) return res.status(404).json({ success: false, error: 'Task not found' });
+        const task = data.sections[found.sectionIndex].tasks[found.taskIndex];
+        for (const key in updates) {
+            if (['id', 'section', 'order'].includes(key)) continue;
+            task[key] = updates[key];
+        }
+        if (!saveTodoBoard(data)) return res.status(500).json({ success: false, error: 'Save failed' });
+        res.json({ success: true, task });
+    } catch (e) {
+        console.error('Error updating task:', e);
+        res.status(500).json({ success: false, error: 'Update failed' });
+    }
+});
+
+app.post('/api/pi/todos', (req, res) => {
+    const taskData = req.body;
+    try {
+        const data = loadTodoBoard();
+        const sectionTitle = taskData.section;
+        if (!sectionTitle) return res.status(400).json({ success: false, error: 'Section title required' });
+        let section = data.sections.find(s => s.title === sectionTitle);
+        if (!section) return res.status(400).json({ success: false, error: 'Section not found' });
+        const id = taskData.id || generateTodoId(data.sections);
+        const now = new Date().toISOString();
+        const newTask = {
+            id,
+            title: taskData.title,
+            priority: taskData.priority || 'medium',
+            tags: Array.isArray(taskData.tags) ? taskData.tags : [],
+            estimate: taskData.estimate || undefined,
+            status: taskData.status || 'todo',
+            created: taskData.created || now,
+            started: taskData.started || undefined,
+            completed: taskData.completed || undefined,
+            progress: taskData.progress || 0,
+            assigned_to: taskData.assigned_to || undefined,
+            agent: taskData.agent || taskData.assigned_to || undefined,
+            description: taskData.description || undefined,
+            results: taskData.results || undefined,
+            dependencies: Array.isArray(taskData.dependencies) ? taskData.dependencies : undefined,
+            order: section.tasks.length
+        };
+        section.tasks.push(newTask);
+        if (!saveTodoBoard(data)) return res.status(500).json({ success: false, error: 'Save failed' });
+        res.json({ success: true, task: newTask });
+    } catch (e) {
+        console.error('Error creating task:', e);
+        res.status(500).json({ success: false, error: 'Create failed' });
+    }
+});
+
+app.delete('/api/pi/todos/:id', (req, res) => {
+    const { id } = req.params;
+    try {
+        const data = loadTodoBoard();
+        const found = findTaskIndex(data.sections, id);
+        if (!found) return res.status(404).json({ success: false, error: 'Task not found' });
+        data.sections[found.sectionIndex].tasks.splice(found.taskIndex, 1);
+        data.sections[found.sectionIndex].tasks.forEach((t, idx) => { t.order = idx; });
+        if (!saveTodoBoard(data)) return res.status(500).json({ success: false, error: 'Save failed' });
+        res.json({ success: true });
+    } catch (e) {
+        console.error('Error deleting task:', e);
+        res.status(500).json({ success: false, error: 'Delete failed' });
+    }
+});
+
+app.post('/api/pi/todos/:id/execute', async (req, res) => {
+    const { id } = req.params;
+    const { agent = 'pi', model, instructions } = req.body;
+    try {
+        const data = loadTodoBoard();
+        const found = findTaskIndex(data.sections, id);
+        if (!found) return res.status(404).json({ success: false, error: 'Task not found' });
+        const task = data.sections[found.sectionIndex].tasks[found.taskIndex];
+        if (task.status === 'done') return res.status(400).json({ success: false, error: 'Task already done' });
+        const now = new Date().toISOString();
+        task.status = 'in-progress';
+        task.started = now;
+        task.progress = 0;
+        if (!task.results) task.results = '';
+        task.results += `[${new Date().toLocaleString()}] Execution started with agent: ${agent}\n`;
+        if (instructions) task.results += `Instructions: ${instructions}\n`;
+        if (!saveTodoBoard(data)) return res.status(500).json({ success: false, error: 'Save failed' });
+
+        // Spawn a background agent session (non-blocking, best-effort)
+        let sessionId = null;
+        try {
+            const spawnResult = await spawnAgentSession(task, agent, model, instructions);
+            if (spawnResult.success && spawnResult.sessionId) {
+                sessionId = spawnResult.sessionId;
+                task.results += `[${new Date().toLocaleString()}] Agent session spawned: ${sessionId}\n`;
+                // Save the updated results with session ID
+                saveTodoBoard(data);
+            } else {
+                console.warn(`Failed to spawn agent session for task ${id}:`, spawnResult.error);
+                task.results += `[${new Date().toLocaleString()}] Agent spawn warning: ${spawnResult.error || 'unknown error'}\n`;
+                saveTodoBoard(data);
+            }
+        } catch (spawnError) {
+            console.error('Error spawning agent session:', spawnError);
+            task.results += `[${new Date().toLocaleString()}] Agent spawn error: ${spawnError.message || spawnError}\n`;
+            saveTodoBoard(data);
+        }
+
+        res.json({ success: true, task, agent, model, sessionId });
+    } catch (e) {
+        console.error('Error executing task:', e);
+        res.status(500).json({ success: false, error: 'Execution failed' });
+    }
+});
+
+app.post('/api/pi/todos/:id/log', (req, res) => {
+    const { id } = req.params;
+    const { log } = req.body;
+    try {
+        const data = loadTodoBoard();
+        const found = findTaskIndex(data.sections, id);
+        if (!found) return res.status(404).json({ success: false, error: 'Task not found' });
+        const task = data.sections[found.sectionIndex].tasks[found.taskIndex];
+        if (!task.results) task.results = '';
+        task.results += `[${new Date().toLocaleString()}] ${log}\n`;
+        if (!saveTodoBoard(data)) return res.status(500).json({ success: false, error: 'Save failed' });
+        res.json({ success: true });
+    } catch (e) {
+        console.error('Error appending log:', e);
+        res.status(500).json({ success: false, error: 'Log failed' });
+    }
+});
+
+app.get('/api/pi/todos/agent/types', (req, res) => {
+    res.json([
+        { id: 'pi', name: 'Pi (Main Agent)', description: 'The primary assistant with full tool access' },
+        { id: 'coding', name: 'Coding Specialist', description: 'Focused on software development tasks' },
+        { id: 'research', name: 'Research Agent', description: 'Web search and information synthesis' }
+    ]);
 });
 
 // Health check

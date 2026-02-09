@@ -1,4 +1,4 @@
-import { AppItem } from '../types';
+import { AppItem, DashboardTask, TodoBoardData, TodoSection } from '../types';
 
 const API_BASE = 'http://localhost:3005/api/pi';
 
@@ -13,10 +13,11 @@ export interface ChatMessage {
     id: string;
     role: 'user' | 'assistant';
     text: string;
+    reasoning?: string | null;
     time: number;
     isError?: boolean;
-    previewCode?: string; // HTML/React code to preview
-    previewUrl?: string;  // URL to preview (e.g., from code-preview app)
+    previewCode?: string;
+    previewUrl?: string;
 }
 
 export interface MarketWeather {
@@ -43,6 +44,8 @@ export interface CalendarEvent {
     end: { dateTime?: string; date?: string };
     description?: string;
     location?: string;
+    category?: 'work' | 'personal' | 'van' | 'health' | 'finance' | 'meeting' | 'focus' | 'social' | 'other';
+    recurrence?: string;
 }
 
 export interface CalendarData {
@@ -153,9 +156,10 @@ export async function sendPiMessage(text: string, type: string = 'info'): Promis
 // Chat API (Real conversation with Pi)
 // ============================================
 
-export async function getChatHistory(): Promise<ChatMessage[]> {
+export async function getChatHistory(agentId: string = 'dashboard'): Promise<ChatMessage[]> {
     try {
-        const response = await fetch(`${API_BASE}/chat`);
+        const params = new URLSearchParams({ agentId });
+        const response = await fetch(`${API_BASE}/chat?${params}`);
         return await response.json();
     } catch (error) {
         console.error('Failed to fetch chat history:', error);
@@ -183,9 +187,10 @@ export async function sendChatMessage(message: string, agentId: string = 'dashbo
     }
 }
 
-export async function clearChatHistory(): Promise<ChatMessage[]> {
+export async function clearChatHistory(agentId: string = 'dashboard'): Promise<ChatMessage[]> {
     try {
-        const response = await fetch(`${API_BASE}/chat`, { method: 'DELETE' });
+        const params = new URLSearchParams({ agentId });
+        const response = await fetch(`${API_BASE}/chat?${params}`, { method: 'DELETE' });
         const data = await response.json();
         return data.history || [];
     } catch (error) {
@@ -242,5 +247,123 @@ export async function getGrimoire(): Promise<AppItem[]> {
     } catch (error) {
         console.error('Failed to fetch grimoire:', error);
         return [];
+    }
+}
+
+// ============================================
+// Dashboard Global Todo Board API
+// ============================================
+
+/**
+ * Fetch all tasks from the global todo board
+ */
+export async function getTodoBoard(): Promise<TodoBoardData> {
+    try {
+        const response = await fetch(`${API_BASE}/todos`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return await response.json();
+    } catch (error) {
+        console.error('Failed to fetch todo board:', error);
+        // Return empty structure on error
+        return { sections: [], taskById: new Map(), totalTasks: 0, completedCount: 0, progressPercent: 0 };
+    }
+}
+
+/**
+ * Update a task by ID (partial update)
+ */
+export async function updateTask(id: string, updates: Partial<DashboardTask>): Promise<boolean> {
+    try {
+        const response = await fetch(`${API_BASE}/todos/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updates)
+        });
+        const data = await response.json();
+        return data.success;
+    } catch (error) {
+        console.error('Failed to update task:', error);
+        return false;
+    }
+}
+
+/**
+ * Create a new task
+ */
+export async function createTask(task: Omit<DashboardTask, 'id' | 'created' | 'order'> & { section: string }): Promise<DashboardTask> {
+    try {
+        const response = await fetch(`${API_BASE}/todos`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(task)
+        });
+        const data = await response.json();
+        return data.task;
+    } catch (error) {
+        console.error('Failed to create task:', error);
+        throw error;
+    }
+}
+
+/**
+ * Delete a task by ID
+ */
+export async function deleteTask(id: string): Promise<boolean> {
+    try {
+        const response = await fetch(`${API_BASE}/todos/${id}`, { method: 'DELETE' });
+        const data = await response.json();
+        return data.success;
+    } catch (error) {
+        console.error('Failed to delete task:', error);
+        return false;
+    }
+}
+
+/**
+ * Execute a task (starts agent work)
+ */
+export async function executeTask(id: string, agent: string = 'pi', model?: string, instructions?: string): Promise<{ success: boolean; sessionId?: string }> {
+    try {
+        const response = await fetch(`${API_BASE}/todos/${id}/execute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ agent, model, instructions })
+        });
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error('Failed to execute task:', error);
+        return { success: false };
+    }
+}
+
+/**
+ * Append a log entry to a task's results (called by agent)
+ */
+export async function appendTaskLog(id: string, log: string): Promise<boolean> {
+    try {
+        const response = await fetch(`${API_BASE}/todos/${id}/log`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ log })
+        });
+        const data = await response.json();
+        return data.success;
+    } catch (error) {
+        console.error('Failed to append task log:', error);
+        return false;
+    }
+}
+
+/**
+ * List available agent types for execution
+ */
+export async function getAgentTypes(): Promise<Array<{ id: string; name: string; description?: string }>> {
+    try {
+        const response = await fetch(`${API_BASE}/todos/agent/types`);
+        return await response.json();
+    } catch (error) {
+        console.error('Failed to fetch agent types:', error);
+        return [{ id: 'pi', name: 'Pi (Main Agent)' }];
     }
 }
