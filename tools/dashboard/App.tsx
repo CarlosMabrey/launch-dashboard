@@ -8,7 +8,8 @@ import {
   getPiMessages, sendPiMessage, getMarketWeather, getVanFundData, getGithubActivity,
   getChatHistory, sendChatMessage, clearChatHistory, getCalendarData,
   createCalendarEvent, updateCalendarEvent, deleteCalendarEvent, getGrimoire,
-  PiMessage, ChatMessage, MarketWeather, VanFundData, GithubActivity, CalendarEvent
+  PiMessage, ChatMessage, MarketWeather, VanFundData, GithubActivity, CalendarEvent,
+  getProjects, Project
 } from './services/piService';
 import AppWindow from './components/AppWindow';
 import EmbeddedAppSidebar from './components/EmbeddedAppSidebar';
@@ -117,8 +118,9 @@ interface AppGrimoireProps {
   apps: AppItem[];
   onLaunch: (app: AppItem) => void;
   onContextMenu: (app: AppItem, e: React.MouseEvent) => void;
+  onCreate?: () => void;
 }
-function AppGrimoireCell({ apps, onLaunch, onContextMenu }: AppGrimoireProps) {
+function AppGrimoireCell({ apps, onLaunch, onContextMenu, onCreate }: AppGrimoireProps) {
   return (
     <div className={`${GLASS} rounded-2xl p-6 bg-gradient-to-br from-indigo-500/10 to-purple-600/5`}>
       <div className="flex items-center justify-between mb-6">
@@ -142,7 +144,13 @@ function AppGrimoireCell({ apps, onLaunch, onContextMenu }: AppGrimoireProps) {
         ))}
         
         {/* Magic Add Slot */}
-        <div className="border-2 border-dashed border-white/5 rounded-2xl p-4 flex flex-col items-center justify-center hover:border-white/20 hover:bg-white/[0.02] transition-all cursor-pointer group">
+        <div
+          className="border-2 border-dashed border-white/5 rounded-2xl p-4 flex flex-col items-center justify-center hover:border-white/20 hover:bg-white/[0.02] transition-all cursor-pointer group"
+          onClick={onCreate}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCreate?.(); } }}
+        >
           <div className="text-2xl text-white/20 group-hover:text-white/40 group-hover:scale-110 transition-all">+</div>
           <div className="text-[9px] font-bold uppercase tracking-widest text-white/10 group-hover:text-white/30 mt-2">New Ritual</div>
         </div>
@@ -1370,7 +1378,153 @@ function AppCard({ app, onLaunch, onContext }: AppCardProps) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────
-// Global Search (Command Palette)
+// Project Manager Widget
+// ─────────────────────────────────────────────────────────────────────────────────
+interface ProjectManagerWidgetProps {
+  projects: Project[];
+  apps: AppItem[];
+  onOpenProject: (path: string) => void;
+  onLaunchApp: (app: AppItem) => void;
+}
+
+function ProjectManagerWidget({ projects, apps, onOpenProject, onLaunchApp }: ProjectManagerWidgetProps) {
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+
+  const selectedProject = projects.find(p => p.id === selectedProjectId) || null;
+
+  // Find associated apps for a project (by matching directory)
+  const getProjectApps = (project: Project) => {
+    return apps.filter(app => app.directory && isSubdirectory(project.path, app.directory));
+  };
+
+  // Check if any app for this project is running
+  const isProjectRunning = (project: Project) => {
+    return getProjectApps(project).some(app => app.isOnline);
+  };
+
+  // Handler to run project's main service (pick first non-online app, or toggle)
+  const handleRunProject = (project: Project) => {
+    const projectApps = getProjectApps(project);
+    if (projectApps.length === 0) {
+      alert('No known service associated with this project. Add it to the Grimoire first.');
+      return;
+    }
+    // Prefer to start a stopped app; if all running, maybe do nothing or stop all?
+    const stoppedApp = projectApps.find(app => !app.isOnline);
+    if (stoppedApp) {
+      onLaunchApp(stoppedApp);
+    } else {
+      // All are running; maybe toggle the first one off? Or do nothing.
+      alert('All associated services are already running.');
+    }
+  };
+
+  return (
+    <div className={`${GLASS} rounded-2xl p-6 bg-gradient-to-br ${ACCENT.purple} h-[500px] flex flex-col`}>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-white/50">Project Manager</h3>
+        <span className="text-[10px] text-white/30">{projects.length} projects</span>
+      </div>
+
+      {/* Project selector */}
+      <div className="mb-4">
+        <select
+          value={selectedProjectId || ''}
+          onChange={(e) => setSelectedProjectId(e.target.value || null)}
+          className="w-full px-3 py-2 bg-black/30 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500/50"
+        >
+          <option value="">-- Select a Project --</option>
+          {projects.map(p => (
+            <option key={p.id} value={p.id}>
+              {p.name} {isProjectRunning(p) ? '●' : '○'}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Project details when selected */}
+      {selectedProject && (
+        <div className="flex-1 overflow-y-auto space-y-4">
+          {/* Header with actions */}
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-semibold text-white">{selectedProject.name}</div>
+              <div className="text-[10px] text-white/40 truncate max-w-[180px]">{selectedProject.path}</div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => onOpenProject(selectedProject.path)}
+                className="px-3 py-1 text-xs font-medium uppercase tracking-wide rounded bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 transition-colors"
+                title="Open in Antigravity"
+              >
+                Open
+              </button>
+              <button
+                onClick={() => handleRunProject(selectedProject)}
+                className="px-3 py-1 text-xs font-medium uppercase tracking-wide rounded bg-purple-500/20 border border-purple-400/40 text-purple-300 hover:bg-purple-500/30 transition-colors"
+                title="Start/Run project service"
+              >
+                {isProjectRunning(selectedProject) ? 'Running' : 'Run'}
+              </button>
+            </div>
+          </div>
+
+          {/* Tasks */}
+          {selectedProject.tasks.length === 0 ? (
+            <div className="text-xs text-white/40 italic">No tasks found in todo.md</div>
+          ) : (
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-white/50 uppercase tracking-wider mb-2">
+                Tasks ({selectedProject.tasks.filter(t => t.status !== 'done').length} active)
+              </div>
+              {selectedProject.tasks.map(task => (
+                <div
+                  key={task.id}
+                  className={`p-2 rounded border ${
+                    task.status === 'done' ? 'bg-white/5 border-white/5 text-white/30 line-through' :
+                    task.status === 'in-progress' ? 'bg-purple-500/10 border-purple-400/30' :
+                    task.status === 'blocked' ? 'bg-rose-500/10 border-rose-400/30' :
+                    'bg-white/5 border-white/10'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-white truncate">{task.title}</div>
+                      {task.agent && (
+                        <div className="text-[10px] text-purple-300 uppercase mt-1">
+                          @{task.agent}
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-white/30 capitalize">{task.status.replace('-', ' ')}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!selectedProject && (
+        <div className="flex-1 flex items-center justify-center text-white/40 text-sm text-center px-4">
+          Select a project from the dropdown to view tasks and manage services.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Helper to check if a path is a subdirectory of another
+function isSubdirectory(parent: string, child: string): boolean {
+  const p = parent.toLowerCase().replace(/\\/g, '/');
+  const c = child.toLowerCase().replace(/\\/g, '/');
+  const normalizedParent = p.endsWith('/') ? p : p + '/';
+  return c.startsWith(normalizedParent) || c === p;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────
+// Command Palette
 // ─────────────────────────────────────────────────────────────────────────────────
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -1555,32 +1709,63 @@ const App: React.FC = () => {
   const [vanFund, setVanFund] = useState<VanFundData>({ current: 0, target: 50000, contributions: [] });
   const [githubActivity, setGithubActivity] = useState<GithubActivity>({ totalContributions: 0, dailyHistory: {} });
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [sidebarsCollapsed, setSidebarsCollapsed] = useState(true);
 
   // ─── Data Fetching ─────────────────────────────────────────────────────────────
   const fetchAllNonChatData = useCallback(async () => {
-    const [msgs, wthr, fund, github, cal, grimoire] = await Promise.all([
+    const [msgs, wthr, fund, github, cal, grimoire, projs] = await Promise.all([
       getPiMessages(),
       getMarketWeather(),
       getVanFundData(),
       getGithubActivity(),
       getCalendarData(),
-      getGrimoire()
+      getGrimoire(),
+      getProjects()
     ]);
     setPiMessages(msgs);
     setWeather(wthr);
     setVanFund(fund);
     setGithubActivity(github);
     if (cal.success) setCalendarEvents(cal.events);
+    setProjects(projs);
     
     // Update apps list from grimoire
     if (grimoire && grimoire.length > 0) {
       setApps(prev => {
         // Merge grimoire with existing apps to preserve online status if possible
-        return grimoire.map(gApp => {
-          const existing = prev.find(p => p.id === gApp.id);
-          return existing ? { ...gApp, isOnline: existing.isOnline, status: existing.status } : gApp;
-        });
+        const existingMap = new Map(prev.map(app => [app.id, app]));
+        const mergedApps: AppItem[] = [];
+
+        // Merge each grimoire app with existing client app (if any)
+        for (const gApp of grimoire) {
+          const existing = existingMap.get(gApp.id);
+          if (existing) {
+            // Start with server data
+            const merged = { ...gApp };
+            // Preserve client-side fields from existing
+            const clientFields: (keyof AppItem)[] = [
+              'isOnline', 'status', 'isEmbedded', 'port', 'embeddedUrl', 'badge', 'todoData', 'hasTodo'
+            ];
+            for (const field of clientFields) {
+              if (existing[field] !== undefined) {
+                merged[field] = existing[field];
+              }
+            }
+            mergedApps.push(merged as AppItem);
+            existingMap.delete(gApp.id); // mark processed
+          } else {
+            mergedApps.push(gApp);
+          }
+        }
+
+        // Add any remaining existing apps (new local apps not in grimoire)
+        for (const leftover of existingMap.values()) {
+          mergedApps.push(leftover);
+        }
+
+        return mergedApps;
       });
     }
   }, []);
@@ -1876,7 +2061,23 @@ const App: React.FC = () => {
                      onContextMenu={(app, e) => {
                        e.preventDefault();
                        setContextMenu({ x: e.clientX, y: e.clientY, app });
-                     }} 
+                     }}
+                     onCreate={() => {
+                       const emptyApp: AppItem = {
+                         id: 'new',
+                         name: '',
+                         icon: '🌐',
+                         badge: '',
+                         status: 'idle',
+                         colorClass: 'bg-gradient-to-br from-[#1a1a1a] to-[#0a0a0a]',
+                         url: '#',
+                         isEmbedded: true,
+                         appType: 'web'
+                       };
+                       setSelectedApp(emptyApp);
+                       setIsEditMode(false);
+                       setStartInFullscreen(false);
+                     }}
                    />
                 </div>
 

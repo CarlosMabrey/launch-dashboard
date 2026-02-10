@@ -367,3 +367,33 @@ export async function getAgentTypes(): Promise<Array<{ id: string; name: string;
         return [{ id: 'pi', name: 'Pi (Main Agent)' }];
     }
 }
+
+// ============================================
+// Projects API
+// ============================================
+
+export interface Project {
+    id: string;
+    name: string;
+    path: string;
+    hasTodo: boolean;
+    tasks: Array<{
+        id: string;
+        title: string;
+        status: string;
+        agent?: string;
+        priority?: string;
+        section: string;
+    }>;
+}
+
+export async function getProjects(): Promise<Project[]> {
+    try {
+        const response = await fetch(`${API_BASE}/projects`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return await response.json();
+    } catch (error) {
+        console.error('Failed to fetch projects:', error);
+        return [];
+    }
+}

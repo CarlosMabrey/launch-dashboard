@@ -54,6 +54,10 @@ function applyAuraColors(colors: AuraScheme['colors']) {
   root.style.setProperty('--aura-6', colors[5]);
 }
 
+// Initialize default colors immediately on module load (before React mounts)
+const defaultColors = DEFAULT_SCHEMES[0].colors;
+applyAuraColors(defaultColors);
+
 function safeParse<T>(raw: string | null): T | null {
   if (!raw) return null;
   try {
@@ -127,6 +131,17 @@ export default function AuraSettings() {
       },
     };
     await copy(JSON.stringify(payload, null, 2));
+  };
+
+  const resetAll = () => {
+    // Reset schemes to defaults
+    setSchemes(DEFAULT_SCHEMES);
+    // Reset active to scheme-1
+    setActiveId(DEFAULT_SCHEMES[0].id);
+    // Reset background mode to CSS
+    setBgMode('css');
+    // Clear any customizations from localStorage beyond what we just set
+    // (the useEffect handlers will persist the defaults)
   };
 
   return (
@@ -235,6 +250,13 @@ export default function AuraSettings() {
                   title="Copy as comma-separated list"
                 >
                   List
+                </button>
+                <button
+                  onClick={resetAll}
+                  className="py-3 px-4 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[10px] font-bold uppercase tracking-widest hover:bg-rose-500/20 transition-all"
+                  title="Reset all colors and mode to defaults"
+                >
+                  Reset All
                 </button>
               </div>
 
