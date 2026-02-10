@@ -46,3 +46,7 @@ out/
 # Backup/legacy
 legacy/
 **/legacy/
+
+# Google Service Account (never commit credentials!)
+**/service-account.json
+service-account.json
