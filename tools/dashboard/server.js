@@ -1488,24 +1488,29 @@ app.get('/api/pi/projects', (req, res) => {
                 const projectPath = path.join(projectsDir, folder);
                 const todoPath = path.join(projectPath, 'todo.md');
                 let hasTodo = false;
-                let projectTasks = [];
+                let projectTasks: Array<{ id: string; title: string; status: string; agent?: string; priority?: string; section: string }> = [];
 
                 if (fs.existsSync(todoPath)) {
                     hasTodo = true;
                     try {
-                        const content = fs.readFileSync(todoPath, 'utf8');
-                        const parsed = parseDashboardTodo(content);
-                        // Flatten tasks from all sections
-                        projectTasks = parsed.sections.flatMap(sec =>
-                            sec.tasks.map(t => ({
-                                id: t.id,
-                                title: t.title,
-                                status: t.status || 'todo',
-                                agent: t.assigned_to || t.agent,
-                                priority: t.priority,
-                                section: sec.title
-                            }))
-                        );
+                        const todoData = parseTodoFile(todoPath);
+                        if (todoData) {
+                            // Flatten tasks from all sections into a unified list
+                            const flatten = (tasks: any[], section: string) => tasks.map(t => ({
+                                id: t.id || `${section}-${t.id || Math.random().toString(36).substr(2, 9)}`,
+                                title: t.text,
+                                status: t.status || (section === 'inProgress' ? 'in-progress' : section === 'backlog' ? 'todo' : section === 'blocked' ? 'blocked' : 'done'),
+                                agent: t.assignee,
+                                priority: 'medium',
+                                section
+                            }));
+                            projectTasks = [
+                                ...flatten(todoData.inProgress, 'inProgress'),
+                                ...flatten(todoData.blocked, 'blocked'),
+                                ...flatten(todoData.completed, 'completed'),
+                                ...flatten(todoData.backlog, 'backlog')
+                            ];
+                        }
                     } catch (e) {
                         console.warn(`Failed to parse todo.md for project ${folder}:`, e);
                     }
