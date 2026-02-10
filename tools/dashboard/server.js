@@ -1469,6 +1469,65 @@ app.get('/api/pi/todos/agent/types', (req, res) => {
     ]);
 });
 
+// ============================================
+// Projects API
+// ============================================
+
+app.get('/api/pi/projects', (req, res) => {
+    try {
+        const projectsDir = path.join(PI_ROOT, 'projects');
+        const projects = [];
+
+        if (fs.existsSync(projectsDir)) {
+            const folders = fs.readdirSync(projectsDir).filter(f => {
+                const p = path.join(projectsDir, f);
+                return fs.statSync(p).isDirectory() && !f.startsWith('.');
+            });
+
+            for (const folder of folders) {
+                const projectPath = path.join(projectsDir, folder);
+                const todoPath = path.join(projectPath, 'todo.md');
+                let hasTodo = false;
+                let projectTasks = [];
+
+                if (fs.existsSync(todoPath)) {
+                    hasTodo = true;
+                    try {
+                        const content = fs.readFileSync(todoPath, 'utf8');
+                        const parsed = parseDashboardTodo(content);
+                        // Flatten tasks from all sections
+                        projectTasks = parsed.sections.flatMap(sec =>
+                            sec.tasks.map(t => ({
+                                id: t.id,
+                                title: t.title,
+                                status: t.status || 'todo',
+                                agent: t.assigned_to || t.agent,
+                                priority: t.priority,
+                                section: sec.title
+                            }))
+                        );
+                    } catch (e) {
+                        console.warn(`Failed to parse todo.md for project ${folder}:`, e);
+                    }
+                }
+
+                projects.push({
+                    id: folder.toLowerCase().replace(/\s+/g, '-'),
+                    name: folder,
+                    path: projectPath,
+                    hasTodo,
+                    tasks: projectTasks
+                });
+            }
+        }
+
+        res.json({ projects });
+    } catch (e) {
+        console.error('Error fetching projects:', e);
+        res.status(500).json({ error: 'Failed to fetch projects' });
+    }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', services: runningProcesses.size });
