@@ -297,7 +297,7 @@ interface TemporalFluxProps {
   onRefresh: () => Promise<void>;
 }
 function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
-  const [view, setView] = useState<'month' | 'week' | 'day'>('month');
+  const [view, setView] = useState<'month' | 'week' | 'day'>('day');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
@@ -314,53 +314,48 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
   const [location, setLocation] = useState('');
   const [isAllDay, setIsAllDay] = useState(false);
 
-  // Apple-inspired design tokens with dynamic accent from Aura settings
+  // Refs for scroll management
+  const timelineRef = useRef<HTMLDivElement>(null);
+
+  // Dark theme design tokens (matching mockup)
   const COLORS = {
-    bg: 'bg-white/90 backdrop-blur-2xl',
-    border: 'border-gray-200/60',
-    hover: 'hover:bg-gray-50/80',
-    accent: 'bg-[color-mix(in_srgb,var(--aura-4)_12%,transparent)] text-[var(--aura-4)] border-[color:color-mix(in_srgb,var(--aura-4)_20%,transparent)]',
-    accentHover: 'hover:bg-[color-mix(in_srgb,var(--aura-4)_18%,transparent)]',
-    todayRing: 'ring-2 ring-[color:color-mix(in_srgb,var(--aura-4)_40%,transparent)]',
-    selected: 'bg-[color-mix(in_srgb,var(--aura-4)_10%,transparent)] border-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)]',
-    eventBg: 'bg-[color-mix(in_srgb,var(--aura-4)_14%,transparent)] border-l-2 border-[color:color-mix(in_srgb,var(--aura-4)_40%,transparent)]',
-    eventHover: 'hover:bg-[color-mix(in_srgb,var(--aura-4)_20%,transparent)]',
-    text: {
-      primary: 'text-gray-900',
-      secondary: 'text-gray-600',
-      tertiary: 'text-gray-400'
-    },
-    shadow: 'shadow-lg shadow-gray-200/30'
+    bg: 'bg-white/5 backdrop-blur-2xl',
+    border: 'border-white/10',
+    hover: 'hover:bg-white/10',
+    container: 'bg-white/5 backdrop-blur-2xl border border-white/10',
+    headerBg: 'bg-purple-900/20 border-purple-500/20',
+    dateText: 'bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent',
+    button: 'bg-purple-500/20 border-purple-400/40 text-purple-300 hover:bg-purple-500/30 hover:border-purple-400/60',
+    addButton: 'bg-gradient-to-r from-emerald-500/20 to-blue-500/20 border-emerald-400/40 text-emerald-300 hover:from-emerald-500/30 hover:to-blue-500/30',
+    timeLabel: 'text-white/50 border-r border-white/10',
+    hourLine: 'border-b border-white/5',
+    eventDefault: 'bg-gradient-to-br from-purple-500/25 to-blue-500/15 border-l-2 border-purple-400/50',
+    eventTeam: 'bg-gradient-to-br from-purple-500/25 to-indigo-500/15 border-l-2 border-purple-500/50',
+    eventCall: 'bg-gradient-to-br from-sky-500/25 to-blue-500/15 border-l-2 border-sky-500/50',
+    eventLunch: 'bg-gradient-to-br from-emerald-500/25 to-teal-500/15 border-l-2 border-emerald-500/50',
+    eventReview: 'bg-gradient-to-br from-amber-500/25 to-orange-500/15 border-l-2 border-amber-500/50',
+    eventVan: 'bg-gradient-to-br from-fuchsia-500/25 to-pink-500/15 border-l-2 border-fuchsia-500/50',
+    nowMarker: 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]'
   };
 
   const loading = false; // Events loaded via parent
 
-  // Navigation with smooth animation
+  // Navigation (day-based)
   const navigatePrevious = () => {
     setIsAnimating(true);
     const next = new Date(currentDate);
-    if (view === 'month') {
-      next.setMonth(next.getMonth() - 1);
-    } else if (view === 'week') {
-      next.setDate(next.getDate() - 7);
-    } else {
-      next.setDate(next.getDate() - 1);
-    }
+    next.setDate(next.getDate() - 1);
     setCurrentDate(next);
+    setSelectedDate(next);
     setTimeout(() => setIsAnimating(false), 250);
   };
 
   const navigateNext = () => {
     setIsAnimating(true);
     const next = new Date(currentDate);
-    if (view === 'month') {
-      next.setMonth(next.getMonth() + 1);
-    } else if (view === 'week') {
-      next.setDate(next.getDate() + 7);
-    } else {
-      next.setDate(next.getDate() + 1);
-    }
+    next.setDate(next.getDate() + 1);
     setCurrentDate(next);
+    setSelectedDate(next);
     setTimeout(() => setIsAnimating(false), 250);
   };
 
@@ -609,6 +604,24 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
     }
   })();
 
+  // Auto-scroll to current time in day view
+  useEffect(() => {
+    if (view === 'day' && timelineRef.current) {
+      const now = new Date();
+      if (isSameDay(selectedDate, now)) {
+        const nowMinutes = now.getHours() * 60 + now.getMinutes();
+        const pixelPerMinute = 80 / 60;
+        const startOffset = 6 * 60; // 6 AM in minutes
+        const nowPosition = Math.max(0, nowMinutes - startOffset) * pixelPerMinute;
+        const container = timelineRef.current;
+        const containerHeight = container.clientHeight;
+        const maxScroll = container.scrollHeight - containerHeight;
+        const scrollTarget = Math.min(Math.max(nowPosition - containerHeight * 0.3, 0), maxScroll);
+        container.scrollTo({ top: scrollTarget, behavior: 'smooth' });
+      }
+    }
+  }, [view, selectedDate]);
+
   // Render helpers
   const renderMonthView = () => {
     const days = getDaysForView();
@@ -724,7 +737,7 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
                           >
                             <div className="font-medium truncate">{event.summary}</div>
                             {event.location && (
-                              <div className="text-[9px] text-gray-600 truncate">{event.location}</div>
+                              <div className="text-[9px] text-white/60 truncate">{event.location}</div>
                             )}
                           </div>
                         );
@@ -778,7 +791,7 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
         <div className="w-20 pr-4 text-right flex-shrink-0 bg-white/5">
           <div className="h-12" />
           {hourSlots.map(hour => (
-            <div key={hour} className="h-[60px] text-[10px] text-gray-500 text-right pr-2 pt-2 font-mono leading-none">
+            <div key={hour} className="h-[60px] text-[10px] text-white/50 text-right pr-2 pt-2 font-mono leading-none">
               {formatHour(hour)}
             </div>
           ))}
@@ -806,7 +819,7 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
 
           {/* All-day events section */}
           <div className="absolute top-0 left-2 right-2 z-10 bg-gradient-to-b from-white/80 via-white/70 to-transparent backdrop-blur-sm p-3 border-b border-gray-200/30">
-            <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-2">All-day Events</div>
+            <div className="text-[10px] font-semibold text-white/50 uppercase tracking-wide mb-2">All-day Events</div>
             {dayEvents.filter(e => e.start.date).map(event => {
               const color = getEventColor(event);
               return (
@@ -820,7 +833,7 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
                     <span className="truncate">{event.summary}</span>
                   </div>
                   {event.location && (
-                    <div className="text-xs text-gray-600 mt-1 flex items-center gap-1 ml-6">
+                    <div className="text-xs text-white/60 mt-1 flex items-center gap-1 ml-6">
                       <span>📍</span>{event.location}
                     </div>
                   )}
@@ -853,14 +866,14 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
                     <div className="font-semibold text-sm text-gray-900 truncate group-hover:text-gray-950">
                       {event.summary}
                     </div>
-                    <div className="text-xs text-gray-600 mt-0.5 flex items-center gap-1">
+                    <div className="text-xs text-white/60 mt-0.5 flex items-center gap-1">
                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                       {timeDisplay}
                     </div>
                     {event.location && (
-                      <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-1 truncate">
+                      <div className="text-xs text-white/50 mt-0.5 flex items-center gap-1 truncate">
                         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -889,7 +902,7 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
       <div className={`${COLORS.bg} rounded-2xl border ${COLORS.border} ${COLORS.shadow} p-12 flex items-center justify-center`}>
         <div className="text-center space-y-3">
           <div className="w-8 h-8 border-2 border-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] border-t-[var(--aura-4)] rounded-full animate-spin mx-auto" />
-          <div className="text-sm font-medium text-gray-500">Loading events…</div>
+          <div className="text-sm font-medium text-white/50">Loading events…</div>
         </div>
       </div>
     );
@@ -898,7 +911,7 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
   return (
     <div className={`${COLORS.bg} rounded-2xl border ${COLORS.border} ${COLORS.shadow} overflow-hidden transition-all duration-300 ${isAnimating ? 'opacity-80 scale-[0.997]' : 'opacity-100 scale-100'}`}>
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200/50 bg-white/80">
+      <div className={`flex items-center justify-between px-6 py-4 border-b ${COLORS.headerBg}`}>
         <div className="flex items-center gap-4">
           {/* Back button (shown when not in month view) */}
           {(view === 'day' || view === 'week') && (
@@ -907,7 +920,7 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
               className="w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 border border-gray-200/60 flex items-center justify-center transition-all hover:scale-105 active:scale-95"
               aria-label="Back to month view"
             >
-              <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
               </svg>
             </button>
@@ -916,19 +929,19 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
           <div className="flex gap-1">
             <button
               onClick={navigatePrevious}
-              className="w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 border border-gray-200/60 flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+              className={`w-9 h-9 rounded-full ${COLORS.button} flex items-center justify-center transition-all hover:scale-105 active:scale-95`}
               aria-label="Previous"
             >
-              <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
             </button>
             <button
               onClick={navigateNext}
-              className="w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 border border-gray-200/60 flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+              className={`w-9 h-9 rounded-full ${COLORS.button} flex items-center justify-center transition-all hover:scale-105 active:scale-95`}
               aria-label="Next"
             >
-              <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
             </button>
@@ -937,54 +950,41 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
           <button
             onClick={navigateToday}
             disabled={isCurrentPeriod}
-            className={`px-4 py-1.5 text-xs font-medium uppercase tracking-wide rounded-full transition-all ${
-              isCurrentPeriod
-                ? 'bg-transparent text-transparent'
-                : `${COLORS.accent} ${COLORS.accentHover}`
-            }`}
+            className={`px-4 py-2 text-xs font-medium uppercase tracking-wide rounded-full transition-all ${COLORS.button} disabled:opacity-30 disabled:cursor-not-allowed`}
           >
             Today
           </button>
 
-          <h2 className="text-base font-semibold text-gray-900 min-w-[160px] text-center tracking-tight">
-            {formatDateDisplay()}
-          </h2>
+          <div className="flex flex-col ml-2">
+            <div className={`text-2xl font-semibold ${COLORS.dateText}`}>
+              {selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+            </div>
+            <div className="text-[10px] text-white/40 uppercase tracking-widest">Your day at a glance</div>
+          </div>
         </div>
 
-        {/* View Selector */}
-        <div className="flex bg-gray-100/70 rounded-lg p-1 border border-gray-200/40">
-          {(['month', 'week', 'day'] as const).map(v => (
-            <button
-              key={v}
-              onClick={() => setView(v)}
-              className={`px-4 py-1.5 text-xs font-medium uppercase tracking-wide rounded-md transition-all ${
-                view === v
-                  ? 'bg-white text-gray-900 shadow-sm border border-gray-200/60'
-                  : 'text-gray-500 hover:text-gray-700 hover:bg-white/50'
-              }`}
-            >
-              {v}
-            </button>
-          ))}
-        </div>
-
-        {/* Add Event Button */}
+        {/* Add Event Button - Mockup Style */}
         <button
           onClick={() => openCreateModal()}
-          className="w-10 h-10 rounded-full bg-[var(--aura-4)] hover:brightness-75 text-white flex items-center justify-center transition-all hover:scale-105 active:scale-95 shadow-lg shadow-[color:color-mix(in_srgb,var(--aura-4)_20%,transparent)]"
-          aria-label="Add event"
+          className={`px-5 py-2.5 text-xs font-medium uppercase tracking-wide rounded-full transition-all hover:scale-105 active:scale-95 ${COLORS.addButton} flex items-center gap-2`}
+          aria-label="Add new event"
         >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
+          New Event
         </button>
       </div>
 
-      {/* Calendar Content */}
-      <div className="flex-1 overflow-hidden">
+      {/* Calendar Content - Fixed height with scrollable day view */}
+      <div className="h-[500px] overflow-hidden">
         {view === 'month' && renderMonthView()}
         {view === 'week' && renderWeekView()}
-        {view === 'day' && renderDayView()}
+        {view === 'day' && (
+          <div ref={timelineRef} className="h-full overflow-y-auto">
+            {renderDayView()}
+          </div>
+        )}
       </div>
 
       {/* Event Modal */}
@@ -992,12 +992,12 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
           <div className={`${COLORS.bg} backdrop-blur-2xl rounded-2xl shadow-2xl w-full max-w-md border ${COLORS.border} overflow-hidden transition-all duration-300`}>
             <div className={`flex items-center justify-between px-5 py-4 border-b ${COLORS.border}`}>
-              <h3 className="text-base font-semibold text-gray-900">
+              <h3 className="text-base font-semibold text-white">
                 {editingEvent ? 'Edit Event' : 'New Event'}
               </h3>
               <button
                 onClick={() => { setShowModal(false); resetForm(); }}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
+                className="text-white/40 hover:text-white/60 transition-colors"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1007,7 +1007,7 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
 
             <form onSubmit={handleSubmit} className="p-5 space-y-4">
               <div>
-                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">
+                <label className="block text-xs font-medium text-white/50 uppercase tracking-wider mb-1.5">
                   Title
                 </label>
                 <input
@@ -1015,20 +1015,20 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
                   required
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
+                  className="w-full px-3 py-2.5 bg-black/40 border border-white/20 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/50 transition-all"
                   placeholder="Add title"
                 />
               </div>
 
               <div className="flex items-center justify-between py-1">
-                <label className="text-xs font-medium text-gray-600 uppercase tracking-wider">
+                <label className="text-xs font-medium text-white/60 uppercase tracking-wider">
                   All-day
                 </label>
                 <button
                   type="button"
                   onClick={() => setIsAllDay(!isAllDay)}
                   className={`relative w-11 h-6 rounded-full transition-colors ${
-                    isAllDay ? 'bg-[var(--aura-4)]' : 'bg-gray-300'
+                    isAllDay ? 'bg-[var(--aura-4)]' : 'bg-white/20'
                   }`}
                 >
                   <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
@@ -1039,7 +1039,7 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">
+                  <label className="block text-xs font-medium text-white/50 uppercase tracking-wider mb-1.5">
                     {isAllDay ? 'Date' : 'Start'}
                   </label>
                   <input
@@ -1053,12 +1053,12 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
                         setStartDateTime(e.target.value);
                       }
                     }}
-                    className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
+                    className="w-full px-3 py-2.5 bg-black/40 border border-white/20 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
                   />
                 </div>
                 {!isAllDay && (
                   <div>
-                    <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">
+                    <label className="block text-xs font-medium text-white/50 uppercase tracking-wider mb-1.5">
                       Time
                     </label>
                     <input
@@ -1069,7 +1069,7 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
                         const [date] = startDateTime.split('T');
                         setStartDateTime(`${date}T${e.target.value}:00`);
                       }}
-                      className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
+                      className="w-full px-3 py-2.5 bg-black/40 border border-white/20 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
                     />
                   </div>
                 )}
@@ -1077,7 +1077,7 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">
+                  <label className="block text-xs font-medium text-white/50 uppercase tracking-wider mb-1.5">
                     {isAllDay ? 'End date' : 'End'}
                   </label>
                   <input
@@ -1091,12 +1091,12 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
                         setEndDateTime(e.target.value);
                       }
                     }}
-                    className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
+                    className="w-full px-3 py-2.5 bg-black/40 border border-white/20 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
                   />
                 </div>
                 {!isAllDay && (
                   <div>
-                    <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">
+                    <label className="block text-xs font-medium text-white/50 uppercase tracking-wider mb-1.5">
                       Time
                     </label>
                     <input
@@ -1107,34 +1107,34 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
                         const [date] = endDateTime.split('T');
                         setEndDateTime(`${date}T${e.target.value}:00`);
                       }}
-                      className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
+                      className="w-full px-3 py-2.5 bg-black/40 border border-white/20 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
                     />
                   </div>
                 )}
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">
+                <label className="block text-xs font-medium text-white/50 uppercase tracking-wider mb-1.5">
                   Location
                 </label>
                 <input
                   type="text"
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
-                  className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
+                  className="w-full px-3 py-2.5 bg-black/40 border border-white/20 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
                   placeholder="Add location"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">
+                <label className="block text-xs font-medium text-white/50 uppercase tracking-wider mb-1.5">
                   Description
                 </label>
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   rows={3}
-                  className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 resize-none focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
+                  className="w-full px-3 py-2.5 bg-black/40 border border-white/20 rounded-xl text-white placeholder-white/30 resize-none focus:outline-none focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--aura-4)_30%,transparent)] focus:border-[var(--aura-4)] transition-all"
                   placeholder="Add description"
                 />
               </div>
@@ -1143,7 +1143,7 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="flex-1 py-2.5 bg-[var(--aura-4)] hover:brightness-75 disabled:brightness-50 disabled:opacity-60 text-white rounded-xl text-sm font-medium transition-all disabled:cursor-not-allowed shadow-lg shadow-[color:color-mix(in_srgb,var(--aura-4)_20%,transparent)]"
+                  className="flex-1 py-2.5 bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 disabled:from-white/10 disabled:to-white/10 disabled:text-white/30 rounded-xl text-sm font-medium transition-all disabled:cursor-not-allowed shadow-lg"
                 >
                   {isSubmitting ? 'Saving…' : editingEvent ? 'Save Changes' : 'Add Event'}
                 </button>
@@ -1859,8 +1859,13 @@ const App: React.FC = () => {
                 </div>
 
                 {/* Main Calendar View */}
-                <div className="mb-12">
-                   <TemporalFluxCell events={calendarEvents} onRefresh={fetchAllNonChatData} />
+                <div className="mb-12 grid grid-cols-3 gap-6">
+                  <div className="col-span-2">
+                    <TemporalFluxCell events={calendarEvents} onRefresh={fetchAllNonChatData} />
+                  </div>
+                  <div className="col-span-1 bg-black/20 rounded-2xl border border-white/10">
+                    {/* Widget placeholder - to be filled */}
+                  </div>
                 </div>
 
                 {/* App Grimoire Section */}
