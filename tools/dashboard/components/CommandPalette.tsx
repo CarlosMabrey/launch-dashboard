@@ -1,13 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { AppItem } from '../types';
 
 const GLASS = 'bg-white/5 backdrop-blur-xl border border-white/10';
-
-interface AppItem {
-  id: string;
-  name: string;
-  badge: string;
-  isOnline: boolean;
-}
 
 interface CommandPaletteProps {
   isOpen: boolean;
