@@ -9,13 +9,15 @@ import {
   getChatHistory, sendChatMessage, clearChatHistory, getCalendarData,
   createCalendarEvent, updateCalendarEvent, deleteCalendarEvent, getGrimoire,
   PiMessage, ChatMessage, MarketWeather, VanFundData, GithubActivity, CalendarEvent,
-  getProjects, Project
+  getProjects, Project, getAgentTypes, AgentType
 } from './services/piService';
 import AppWindow from './components/AppWindow';
 import EmbeddedAppSidebar from './components/EmbeddedAppSidebar';
 import AuraSettings from './components/AuraSettings';
 import LiquidBackground from './components/LiquidBackground';
 import TodoBoardCell from './components/TodoBoardCell';
+import VoiceAssistantCell from './components/VoiceAssistantCell';
+import AgentRosterCell from './components/AgentRosterCell';
 
 // ════════════════════════════════════════════════════════════════════════════════
 // DESIGN TOKENS
@@ -343,7 +345,12 @@ function TemporalFluxCell({ events, onRefresh }: TemporalFluxProps) {
     eventLunch: 'bg-gradient-to-br from-emerald-500/25 to-teal-500/15 border-l-2 border-emerald-500/50',
     eventReview: 'bg-gradient-to-br from-amber-500/25 to-orange-500/15 border-l-2 border-amber-500/50',
     eventVan: 'bg-gradient-to-br from-fuchsia-500/25 to-pink-500/15 border-l-2 border-fuchsia-500/50',
-    nowMarker: 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]'
+    nowMarker: 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]',
+    // Additional colors used in calendar
+    selected: 'ring-2 ring-violet-400 bg-violet-500/10',
+    eventBg: 'bg-white/5',
+    eventHover: 'hover:bg-white/10',
+    shadow: 'shadow-lg shadow-white/5'
   };
 
   const loading = false; // Events loaded via parent
@@ -1696,10 +1703,11 @@ const App: React.FC = () => {
   const [selectedApp, setSelectedApp] = useState<AppItem | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
   const [startInFullscreen, setStartInFullscreen] = useState(false);
-  const [isSidebarVisible, setIsSidebarVisible] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [activeView, setActiveView] = useState<'discover' | 'agents' | 'logs'>('discover');
   const [chatInputValue, setChatInputValue] = useState('');
-  const [selectedAgent, setSelectedAgent] = useState('dashboard');
+  const [selectedAgent, setSelectedAgent] = useState<string>('dashboard');
+  const [availableAgents, setAvailableAgents] = useState<AgentType[]>([]);
   
   // Cell data
   const [piMessages, setPiMessages] = useState<PiMessage[]>([]);
@@ -1742,18 +1750,19 @@ const App: React.FC = () => {
         for (const gApp of grimoire) {
           const existing = existingMap.get(gApp.id);
           if (existing) {
-            // Start with server data
-            const merged = { ...gApp };
             // Preserve client-side fields from existing
             const clientFields: (keyof AppItem)[] = [
               'isOnline', 'status', 'isEmbedded', 'port', 'embeddedUrl', 'badge', 'todoData', 'hasTodo'
             ];
+            const preserved: Partial<AppItem> = {};
             for (const field of clientFields) {
               if (existing[field] !== undefined) {
-                merged[field] = existing[field];
+                (preserved as any)[field] = existing[field];
               }
             }
-            mergedApps.push(merged as AppItem);
+            // Merge: server data + preserved client fields
+            const merged: AppItem = { ...gApp, ...preserved };
+            mergedApps.push(merged);
             existingMap.delete(gApp.id); // mark processed
           } else {
             mergedApps.push(gApp);
@@ -1789,8 +1798,18 @@ const App: React.FC = () => {
     setChatHistory(chat);
   }, [selectedAgent]);
 
+  const fetchAgents = useCallback(async () => {
+    try {
+      const agents = await getAgentTypes();
+      setAvailableAgents(agents);
+    } catch (error) {
+      console.error('Failed to fetch agents:', error);
+    }
+  }, []);
+
   useEffect(() => { fetchAllNonChatData(); }, [fetchAllNonChatData]);
   useEffect(() => { fetchChatHistory(); }, [fetchChatHistory]);
+  useEffect(() => { fetchAgents(); }, [fetchAgents]);
   useInterval(fetchAllNonChatData, 10000);
   useInterval(fetchTodos, 5000);
 
@@ -1913,9 +1932,9 @@ const App: React.FC = () => {
   }, [selectedAgent]);
 
   const handleClearChat = useCallback(async () => {
-    const history = await clearChatHistory();
+    const history = await clearChatHistory(selectedAgent);
     setChatHistory(history);
-  }, []);
+  }, [selectedAgent]);
 
   const handleCloseWindow = useCallback(() => {
     setSelectedApp(null);
@@ -2048,8 +2067,8 @@ const App: React.FC = () => {
                   <div className="col-span-2">
                     <TemporalFluxCell events={calendarEvents} onRefresh={fetchAllNonChatData} />
                   </div>
-                  <div className="col-span-1 bg-black/20 rounded-2xl border border-white/10">
-                    {/* Widget placeholder - to be filled */}
+                  <div className="col-span-1">
+                    <VoiceAssistantCell />
                   </div>
                 </div>
 
@@ -2118,41 +2137,8 @@ const App: React.FC = () => {
 
             {/* VIEW: AGENTS */}
             {activeView === 'agents' && (
-              <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
-                <header className="mb-12">
-                   <h1 className="text-2xl font-bold text-white uppercase tracking-widest">Agent Roster</h1>
-                   <p className="text-xs text-white/40 uppercase tracking-[0.3em]">Summon your fleet of sub-entities</p>
-                </header>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {['dashboard', 'clawddoc', 'code-architect'].map(agent => (
-                    <div 
-                      key={agent} 
-                      onClick={() => {
-                        setSelectedAgent(agent);
-                        setActiveView('discover'); // Switch back to see chat
-                      }}
-                      className={`ultra-glass border ${selectedAgent === agent ? 'border-indigo-500 bg-indigo-500/10' : 'border-white/10'} p-6 hover:border-white/30 transition-all group cursor-pointer relative overflow-hidden`}
-                    >
-                       <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 blur-3xl rounded-full"></div>
-                       <div className="flex items-center gap-4 mb-4">
-                          <div className={`w-12 h-12 rounded-xl border flex items-center justify-center text-xl ${selectedAgent === agent ? 'bg-indigo-500/20 border-indigo-500/40' : 'bg-white/5 border-white/10'}`}>
-                             {agent === 'dashboard' ? '🔮' : '🤖'}
-                          </div>
-                          <div>
-                             <h3 className="text-white font-bold capitalize">{agent}</h3>
-                             <p className="text-[10px] text-emerald-400 uppercase font-mono">Status: Ready</p>
-                          </div>
-                       </div>
-                       <p className="text-[11px] text-white/50 mb-6 line-clamp-2">
-                          {agent === 'dashboard' ? 'The primary intelligence governing this workspace.' : 'A specialized entity trained for project architecture and construction.'}
-                       </p>
-                       <button className={`w-full py-2 rounded-lg text-[10px] uppercase font-bold transition-all ${selectedAgent === agent ? 'bg-indigo-500 text-white' : 'bg-white/5 border border-white/10 text-white/40 group-hover:text-white'}`}>
-                          {selectedAgent === agent ? 'Connected' : 'Commune'}
-                       </button>
-                    </div>
-                  ))}
-                </div>
+              <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 min-h-full flex flex-col">
+                <AgentRosterCell />
               </div>
             )}
           </div>
@@ -2191,7 +2177,9 @@ const App: React.FC = () => {
               </div>
 
               <h2 className="text-lg font-bold text-white mb-1">Pi Status</h2>
-              <p className="text-xs text-white/40 uppercase tracking-[0.2em] mb-6">Linked: {selectedAgent}</p>
+              <p className="text-xs text-white/40 uppercase tracking-[0.2em] mb-6">
+                Linked: {availableAgents.find(a => a.id === selectedAgent)?.name || selectedAgent}
+              </p>
 
               <div className="w-full px-4 mb-4">
                 <div className="h-1 bg-white/10 rounded-full overflow-hidden">
@@ -2278,6 +2266,22 @@ const App: React.FC = () => {
                      {isChatLoading ? "⏳" : selectedAgent === 'dashboard' ? "🔮" : "🤖"}
                   </span>
                </div>
+               
+               {/* Agent Selector */}
+               {availableAgents.length > 0 && (
+                 <select
+                   value={selectedAgent}
+                   onChange={(e) => setSelectedAgent(e.target.value)}
+                   className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white mr-4 focus:outline-none focus:border-indigo-500/50 capitalize"
+                 >
+                   {availableAgents.map(agent => (
+                     <option key={agent.id} value={agent.id} className="bg-slate-900">
+                       {agent.name}
+                     </option>
+                   ))}
+                 </select>
+               )}
+
                <input 
                  type="text"
                  value={chatInputValue}
@@ -2301,6 +2305,13 @@ const App: React.FC = () => {
                  className="p-3 text-white/40 hover:text-white transition-colors"
                >
                  {isChatLoading ? <i className="fa fa-spinner animate-spin"></i> : <i className="fa fa-paper-plane"></i>}
+               </button>
+               <button 
+                 onClick={handleClearChat}
+                 className="p-3 text-white/40 hover:text-white transition-colors"
+                 title="Clear chat history"
+               >
+                 <i className="fa fa-times"></i>
                </button>
             </div>
          </div>
@@ -2342,7 +2353,7 @@ const App: React.FC = () => {
           isNew={selectedApp.id === 'new'}
           isEdit={isEditMode}
           startInFullscreen={startInFullscreen}
-          isSidebarVisible={isSidebarVisible}
+          isSidebarVisible={isSidebarCollapsed}
           onClose={handleCloseWindow}
           onCreate={handleCreateApp}
           onUpdate={handleUpdateApp}
@@ -2362,7 +2373,7 @@ const App: React.FC = () => {
           setStartInFullscreen(true);
         }}
         onGoToDashboard={handleCloseWindow}
-        onVisibilityChange={setIsSidebarVisible}
+        onVisibilityChange={setIsSidebarCollapsed}
       />
     </div>
   );

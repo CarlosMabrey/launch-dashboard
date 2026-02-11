@@ -50,6 +50,13 @@ if (!fs.existsSync(MOCKUPS_DIR)) {
 // Serve static mockups from code-preview/saved/mockups
 app.use('/mockups', express.static(MOCKUPS_DIR));
 
+// Serve voice assistant audio files
+const VOICE_AUDIO_DIR = path.join(process.cwd(), 'apps', 'voice-assistant', 'audios');
+if (!fs.existsSync(VOICE_AUDIO_DIR)) {
+    fs.mkdirSync(VOICE_AUDIO_DIR, { recursive: true });
+}
+app.use('/apps/voice-assistant/audios', express.static(VOICE_AUDIO_DIR));
+
 // OpenClaw Gateway Config
 // Token resolution order:
 // 1) OPENCLAW_GATEWAY_TOKEN env var
@@ -805,6 +812,166 @@ app.delete('/api/pi/chat', (req, res) => {
 });
 
 // ============================================
+// Piper TTS Configuration
+// ============================================
+const PIPER_PATH = process.env.PIPER_PATH || path.join(process.cwd(), 'piper.exe');
+const PIPER_VOICE = process.env.PIPER_VOICE || ''; // e.g., 'D:\tools\piper\voices\en_GB\en_GB-aru-medium.onnx'
+
+// Voice mapping from frontend voice names to Piper model paths
+const PIPER_VOICE_MAP = {
+    'nova': '',        // Not used - we'll use PIPER_VOICE directly
+    'serene': '',
+    'aria': '',
+    'knight': ''
+    // Actually we'll use the PIPER_VOICE env var as the single voice
+};
+
+// ============================================
+// Voice TTS API (QWEN 3 Integration + Piper Local)
+// ============================================
+app.post('/api/pi/voice/tts', async (req, res) => {
+    const { text, voice = 'nova' } = req.body;
+    if (!text || typeof text !== 'string') {
+        return res.status(400).json({ error: 'Text is required' });
+    }
+
+    try {
+        const audioDir = path.join(process.cwd(), 'apps', 'voice-assistant', 'audios');
+        if (!fs.existsSync(audioDir)) {
+            fs.mkdirSync(audioDir, { recursive: true });
+        }
+
+        const filename = `tts-${crypto.randomUUID().slice(0, 8)}.wav`;
+        const audioPath = path.join(audioDir, filename);
+        const audioUrl = `/apps/voice-assistant/audios/${filename}`;
+
+        // Priority 1: Piper Local (if configured)
+        const piperExe = PIPER_PATH;
+        const piperVoice = PIPER_VOICE;
+        if (piperExe && fs.existsSync(piperExe) && piperVoice && fs.existsSync(piperVoice)) {
+            console.log(`[Piper] Generating TTS with voice: ${piperVoice}`);
+
+            // Piper command: piper.exe -m <model.onnx> -f <output.wav> -- "text"
+            const piperProcess = spawn(piperExe, [
+                '-m', piperVoice,
+                '-f', audioPath,
+                '--',
+                text
+            ]);
+
+            // Capture stderr for debugging
+            let stderr = '';
+            piperProcess.stderr.on('data', (data) => {
+                stderr += data.toString();
+            });
+
+            // Promise to wait for process exit
+            await new Promise((resolve, reject) => {
+                piperProcess.on('close', (code) => {
+                    if (code === 0) {
+                        console.log('[Piper] TTS generation successful');
+                        resolve();
+                    } else {
+                        const err = new Error(`Piper exited with code ${code}`);
+                        err.stderr = stderr;
+                        reject(err);
+                    }
+                });
+                piperProcess.on('error', (err) => {
+                    reject(err);
+                });
+            });
+
+            // Estimate duration: roughly 2.5 chars per second (same as before)
+            const estimatedDuration = Math.max(1, Math.ceil(text.length / 2.5));
+
+            return res.json({
+                success: true,
+                audioUrl,
+                duration: estimatedDuration,
+                voice,
+                textLength: text.length,
+                engine: 'piper'
+            });
+        }
+
+        // Priority 2: DashScope API (if key configured)
+        const dashScopeKey = process.env.DASHSCOPE_API_KEY;
+        if (dashScopeKey) {
+            console.log('[DashScope] Generating TTS via cloud API');
+
+            // Map voice to DashScope voice ID
+            const voiceMap = {
+                'nova': 'miranda',
+                'serene': 'steffan',
+                'aria': 'amy',
+                'knight': 'joshua'
+            };
+            const dashVoice = voiceMap[voice] || 'miranda';
+
+            const response = await fetch('https://dashscope.aliyuncs.com/api/v1/services/audio/tts/synthesize', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${dashScopeKey}`
+                },
+                body: JSON.stringify({
+                    model: 'sambert-tts-v1',
+                    input: {
+                        text: text
+                    },
+                    parameters: {
+                        voice: dashVoice,
+                        format: 'mp3',
+                        sample_rate: 24000
+                    }
+                })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('DashScope TTS error:', response.status, errorText);
+                throw new Error(`DashScope API error: ${response.status}`);
+            }
+
+            const buffer = Buffer.from(await response.arrayBuffer());
+            fs.writeFileSync(audioPath, buffer);
+
+            // Estimate duration
+            const estimatedDuration = Math.max(1, Math.ceil(text.length / 2.5));
+
+            res.json({
+                success: true,
+                audioUrl,
+                duration: estimatedDuration,
+                voice,
+                textLength: text.length,
+                engine: 'dashscope'
+            });
+            return;
+        }
+
+        // Fallback: silent/no TTS
+        console.warn('No TTS engine configured. Set PIPER_PATH/PIPER_VOICE or DASHSCOPE_API_KEY');
+        fs.writeFileSync(audioPath, Buffer.from(''), 'utf8');
+        const estimatedDuration = Math.max(1, Math.ceil(text.length / 2.5));
+        return res.json({
+            success: true,
+            audioUrl,
+            duration: estimatedDuration,
+            voice,
+            textLength: text.length,
+            fallback: true,
+            engine: 'none'
+        });
+
+    } catch (error) {
+        console.error('TTS generation error:', error);
+        res.status(500).json({ error: 'Failed to generate speech', details: error.message });
+    }
+});
+
+// ============================================
 // Van Fund & Contribution API
 // ============================================
 
@@ -1461,12 +1628,40 @@ app.post('/api/pi/todos/:id/log', (req, res) => {
     }
 });
 
-app.get('/api/pi/todos/agent/types', (req, res) => {
+// Get available agent IDs from OpenClaw Gateway
+const fetchOpenClawAgents = async () => {
+  try {
+    const gatewayUrl = OPENCLAW_GATEWAY.baseUrl;
+    const token = OPENCLAW_GATEWAY.token;
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const response = await fetch(`${gatewayUrl}/agents/list`, { headers });
+    if (!response.ok) {
+      console.error('Failed to fetch agents from gateway:', response.status);
+      return [];
+    }
+    const data = await response.json();
+    // data.agents is array of { id, name, description? }
+    return data.agents || [];
+  } catch (error) {
+    console.error('Error fetching OpenClaw agents:', error);
+    return [];
+  }
+};
+
+app.get('/api/pi/todos/agent/types', async (req, res) => {
+  const agents = await fetchOpenClawAgents();
+  if (agents.length === 0) {
+    // Fallback to hardcoded if gateway unreachable
     res.json([
-        { id: 'pi', name: 'Pi (Main Agent)', description: 'The primary assistant with full tool access' },
-        { id: 'coding', name: 'Coding Specialist', description: 'Focused on software development tasks' },
-        { id: 'research', name: 'Research Agent', description: 'Web search and information synthesis' }
+      { id: 'pi', name: 'Pi (Main Agent)', description: 'The primary assistant with full tool access' },
+      { id: 'coding', name: 'Coding Specialist', description: 'Focused on software development tasks' },
+      { id: 'research', name: 'Research Agent', description: 'Web search and information synthesis' }
     ]);
+  } else {
+    res.json(agents);
+  }
 });
 
 // ============================================
@@ -1488,7 +1683,7 @@ app.get('/api/pi/projects', (req, res) => {
                 const projectPath = path.join(projectsDir, folder);
                 const todoPath = path.join(projectPath, 'todo.md');
                 let hasTodo = false;
-                let projectTasks: Array<{ id: string; title: string; status: string; agent?: string; priority?: string; section: string }> = [];
+                let projectTasks = [];
 
                 if (fs.existsSync(todoPath)) {
                     hasTodo = true;
@@ -1496,7 +1691,7 @@ app.get('/api/pi/projects', (req, res) => {
                         const todoData = parseTodoFile(todoPath);
                         if (todoData) {
                             // Flatten tasks from all sections into a unified list
-                            const flatten = (tasks: any[], section: string) => tasks.map(t => ({
+                            const flatten = (tasks, section) => tasks.map(t => ({
                                 id: t.id || `${section}-${t.id || Math.random().toString(36).substr(2, 9)}`,
                                 title: t.text,
                                 status: t.status || (section === 'inProgress' ? 'in-progress' : section === 'backlog' ? 'todo' : section === 'blocked' ? 'blocked' : 'done'),

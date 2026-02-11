@@ -2,6 +2,12 @@ import { AppItem, DashboardTask, TodoBoardData, TodoSection } from '../types';
 
 const API_BASE = 'http://localhost:3005/api/pi';
 
+export interface AgentType {
+  id: string;
+  name: string;
+  description?: string;
+}
+
 export interface PiMessage {
     id: string;
     text: string;
@@ -199,6 +205,40 @@ export async function clearChatHistory(agentId: string = 'dashboard'): Promise<C
     }
 }
 
+// ============================================
+// Voice TTS API (QWEN 3 Integration)
+// ============================================
+
+export interface TTSResponse {
+    success: boolean;
+    audioUrl?: string;
+    duration?: number;
+    voice?: string;
+    textLength?: number;
+    error?: string;
+}
+
+/**
+ * Generate speech audio from text using QWEN 3 TTS
+ */
+export async function generateTTS(text: string, voice: string = 'nova'): Promise<TTSResponse> {
+    try {
+        const response = await fetch(`${API_BASE}/voice/tts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, voice })
+        });
+        return await response.json();
+    } catch (error) {
+        console.error('Failed to generate TTS:', error);
+        return { success: false, error: String(error) };
+    }
+}
+
+// ============================================
+// Market & Analytics APIs
+// ============================================
+
 export async function getMarketWeather(): Promise<MarketWeather> {
     try {
         const response = await fetch(`${API_BASE}/weather`);
@@ -361,6 +401,7 @@ export async function appendTaskLog(id: string, log: string): Promise<boolean> {
 export async function getAgentTypes(): Promise<Array<{ id: string; name: string; description?: string }>> {
     try {
         const response = await fetch(`${API_BASE}/todos/agent/types`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return await response.json();
     } catch (error) {
         console.error('Failed to fetch agent types:', error);
