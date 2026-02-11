@@ -92,6 +92,7 @@ export interface AppItem {
   // Todo integration
   todoData?: TodoData;
   hasTodo?: boolean;
+  lastModified?: number; // Timestamp of last local modification
 }
 
 

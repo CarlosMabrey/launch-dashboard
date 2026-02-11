@@ -3,9 +3,9 @@ import { AppItem, DashboardTask, TodoBoardData, TodoSection } from '../types';
 const API_BASE = 'http://localhost:3005/api/pi';
 
 export interface AgentType {
-  id: string;
-  name: string;
-  description?: string;
+    id: string;
+    name: string;
+    description?: string;
 }
 
 export interface PiMessage {
@@ -24,6 +24,7 @@ export interface ChatMessage {
     isError?: boolean;
     previewCode?: string;
     previewUrl?: string;
+    previews?: Array<{ url: string; code: string }>;
 }
 
 export interface MarketWeather {
@@ -280,6 +281,7 @@ export async function logGithubContribution(): Promise<boolean> {
     }
 }
 
+
 export async function getGrimoire(): Promise<AppItem[]> {
     try {
         const response = await fetch(`${API_BASE}/grimoire`);
@@ -290,9 +292,57 @@ export async function getGrimoire(): Promise<AppItem[]> {
     }
 }
 
-// ============================================
-// Dashboard Global Todo Board API
-// ============================================
+export async function updateAppMetadata(app: AppItem): Promise<boolean> {
+    try {
+        const response = await fetch(`${API_BASE}/grimoire/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(app)
+        });
+        const data = await response.json();
+        return data.success;
+    } catch (error) {
+        console.error('Failed to update app metadata:', error);
+        return false;
+    }
+}
+
+export async function deleteAppFromRegistry(id: string): Promise<boolean> {
+    try {
+        const response = await fetch(`${API_BASE}/grimoire/${id}`, {
+            method: 'DELETE'
+        });
+        const data = await response.json();
+        return data.success;
+    } catch (error) {
+        console.error('Failed to delete app from registry:', error);
+        return false;
+    }
+}
+
+
+
+export async function getRunningServices(): Promise<Array<{ id: string; command: string; directory: string }>> {
+    // Use Electron IPC if available (services started via Electron are tracked in main process)
+    const electronAPI = (window as any).electronAPI;
+    if (electronAPI?.getRunningServices) {
+        try {
+            return await electronAPI.getRunningServices();
+        } catch (error) {
+            console.error('Failed to get running services via Electron IPC:', error);
+        }
+    }
+
+    // Fallback to HTTP backend (for browser-only mode)
+    try {
+        const response = await fetch(`http://localhost:3005/api/services`);
+        return await response.json();
+    } catch (error) {
+        console.error('Failed to fetch running services:', error);
+        return [];
+    }
+}
+
 
 /**
  * Fetch all tasks from the global todo board

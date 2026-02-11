@@ -3,7 +3,6 @@ import React from 'react';
 import { AppItem } from '../types';
 import AppCard from './AppCard';
 import CalendarCell from './CalendarCell';
-import VanFundCell from './VanFundCell';
 import GitHubHeatmapCell from './GitHubHeatmapCell';
 import LivingLedgerCell from './LivingLedgerCell';
 import OmniscienceCell from './OmniscienceCell';

@@ -610,6 +610,15 @@ ipcMain.handle('service-status', async (event, { id }) => {
   };
 });
 
+// List all running services (used by frontend polling to detect online apps)
+ipcMain.handle('services-list', async () => {
+  const services = [];
+  for (const [id, data] of runningProcesses) {
+    services.push({ id, command: data.command, directory: data.directory });
+  }
+  return services;
+});
+
 // Helper function to kill all running processes synchronously
 function killAllServices() {
   const { spawnSync } = require('child_process');

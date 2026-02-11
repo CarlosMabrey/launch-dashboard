@@ -41,12 +41,14 @@ const removeImageBackground = (base64: string): Promise<string> => {
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const { data } = imageData;
 
+
       // Sample background color from 4 corners to find the most consistent one
       const corners = [
         [0, 0],
         [canvas.width - 1, 0],
         [0, canvas.height - 1],
-        [canvas.width - 1, canvas.height - 1]
+        [canvas.width - 1, canvas.height - 1],
+        [Math.floor(canvas.width / 2), 0] // Top middle
       ];
 
       let r_bg = 0, g_bg = 0, b_bg = 0;
@@ -56,15 +58,13 @@ const removeImageBackground = (base64: string): Promise<string> => {
         g_bg += data[idx + 1];
         b_bg += data[idx + 2];
       });
-      r_bg /= 4; g_bg /= 4; b_bg /= 4;
+      r_bg /= corners.length; g_bg /= corners.length; b_bg /= corners.length;
 
-      // Check if it's specifically our Chroma Key Green (#00FF00)
-      const isChromaGreen = r_bg < 100 && g_bg > 150 && b_bg < 100;
+      // Check if it's specifically our Chroma Key Green (#00FF00) or close to it
+      const isChromaGreen = (g_bg > r_bg * 1.5 && g_bg > b_bg * 1.5) || (g_bg > 200 && r_bg < 100 && b_bg < 100);
 
-      // Use a tighter tolerance for chroma green to avoid eating into the icon
-      // but a wider one for white/black which often have compression artifacts
       const isExtreme = (r_bg > 240 && g_bg > 240 && b_bg > 240) || (r_bg < 15 && g_bg < 15 && b_bg < 15);
-      const tolerance = isChromaGreen ? 110 : (isExtreme ? 60 : 35);
+      const tolerance = isChromaGreen ? 130 : (isExtreme ? 60 : 45);
 
       for (let i = 0; i < data.length; i += 4) {
         const r = data[i];
@@ -78,15 +78,23 @@ const removeImageBackground = (base64: string): Promise<string> => {
           Math.pow(b - b_bg, 2)
         );
 
-        if (diff < tolerance) {
+        // EXTRA CHECK: Catch green bleed at the bottom or edges
+        // If it's a "green-heavy" pixel and we're in chroma mode, be more aggressive
+        const isGreenishPixel = g > r * 1.2 && g > b * 1.2;
+
+        if (diff < tolerance || (isChromaGreen && isGreenishPixel && diff < tolerance * 1.5)) {
           // Smooth the edges slightly by using the distance for alpha
-          if (diff > tolerance * 0.8) {
-            data[i + 3] = Math.min(255, (diff - tolerance * 0.8) / (tolerance * 0.2) * 255);
+          const softZone = tolerance * 0.2;
+          if (diff > tolerance - softZone) {
+            data[i + 3] = Math.min(255, ((diff - (tolerance - softZone)) / softZone) * 255);
+            // If it's still green, fade it more
+            if (isGreenishPixel && isChromaGreen) data[i + 3] *= 0.5;
           } else {
             data[i + 3] = 0;
           }
         }
       }
+
 
       ctx.putImageData(imageData, 0, 0);
       resolve(canvas.toDataURL('image/png'));
@@ -1347,7 +1355,7 @@ const AppWindow: React.FC<AppWindowProps> = ({ app, isNew = false, isEdit = fals
                     </div>
                     <div className="flex items-center gap-3">
                       {serviceLogs.length > 0 && (
-                        <button 
+                        <button
                           onClick={handleSummarizeLogs}
                           disabled={isSummarizing}
                           className="text-[8px] font-bold uppercase tracking-widest px-2 py-0.5 border border-white/10 rounded hover:bg-white/5 transition-all text-neonBlue/60 hover:text-neonBlue disabled:opacity-30"
@@ -1362,7 +1370,7 @@ const AppWindow: React.FC<AppWindowProps> = ({ app, isNew = false, isEdit = fals
                   <div className="flex-1 overflow-auto space-y-1 custom-scrollbar pr-2 relative">
                     {logSummary ? (
                       <div className="bg-neonBlue/5 border border-neonBlue/20 rounded-xl p-4 mb-4 animate-in fade-in zoom-in duration-500 relative">
-                        <button 
+                        <button
                           onClick={() => setLogSummary(null)}
                           className="absolute top-2 right-3 text-[10px] text-white/20 hover:text-white"
                         >

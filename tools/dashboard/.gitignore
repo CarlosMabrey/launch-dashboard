@@ -22,3 +22,57 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# ===============================
+# WORKSPACE EXCLUSIONS
+# ===============================
+# Parent workspace directories (keep dashboard self-contained)
+../workspace/
+../agents/
+../projects/
+../skills/
+../docs/
+../flash-ui/
+../piper/
+../tools.md
+
+# Temporary/dev scripts
+scripts/
+temp_*.js
+temp_*.mjs
+temp_*.cjs
+test-*.js
+test-*.mjs
+update_*.js
+update_*.mjs
+update_*.cjs
+scry_*.js
+scry_*.mjs
+weather_*.js
+check-event.cjs
+postWeather.js
+premium.css
+orb-test.html
+patch-chat.mjs.bak
+tmp_head_App.tsx
+tsc-errors.txt
+tsc-output.txt
+
+# Generated/runtime data
+apps/code-preview/saved/mockups/
+market-weather.json
+weather_*.json
+market_scry.js
+grimoire-registry.json
+
+# Public generated assets (keep only manually added static files)
+public/*.json
+public/*.js
+public/*.html
+
+# External downloads
+bfg.jar
+external-vortex/
+
+# Heap/IDE dumps
+.history

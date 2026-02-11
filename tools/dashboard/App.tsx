@@ -9,20 +9,22 @@ import {
   getChatHistory, sendChatMessage, clearChatHistory, getCalendarData,
   createCalendarEvent, updateCalendarEvent, deleteCalendarEvent, getGrimoire,
   PiMessage, ChatMessage, MarketWeather, VanFundData, GithubActivity, CalendarEvent,
-  getProjects, Project, getAgentTypes, AgentType
+  getProjects, Project, getAgentTypes, AgentType, updateAppMetadata, getRunningServices,
+  deleteAppFromRegistry
 } from './services/piService';
-import { useInterval, useLocalStorage } from './hooks/useLocalStorage';
+import { useInterval } from './hooks/useLocalStorage';
 import AppWindow from './components/AppWindow';
 import EmbeddedAppSidebar from './components/EmbeddedAppSidebar';
 import AuraSettings from './components/AuraSettings';
 import LiquidBackground from './components/LiquidBackground';
-import TodoBoardCell from './components/TodoBoardCell';
+import TodoBoardKanban from './components/TodoBoardKanban';
 import VoiceAssistantCell from './components/VoiceAssistantCell';
 import AgentRosterCell from './components/AgentRosterCell';
 import BackgroundMode from './components/BackgroundMode';
-import SentimentScryerCell from './components/SentimentScryerCell';
-import VanFundCell from './components/VanFundCell';
-import ActivePulseCell from './components/ActivePulseCell';
+// Core Grid Components
+import { SentimentScryerCell } from './components/SentimentScryerCell';
+import { VanFundCell } from './components/VanFundCell';
+import { ActivePulseCell } from './components/ActivePulseCell';
 import AppGrimoireCell from './components/AppGrimoireCell';
 import TemporalFluxCell from './components/TemporalFluxCell';
 import CommandPalette from './components/CommandPalette';
@@ -44,10 +46,10 @@ const ACCENT = {
 
 const App: React.FC = () => {
   // ─── State ─────────────────────────────────────────────────────────────────────
-  const [apps, setApps] = useLocalStorage<AppItem[]>('jellylaunch_apps', INITIAL_APPS);
+  const [apps, setApps] = useState<AppItem[]>(INITIAL_APPS);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; app: AppItem } | null>(null);
-  
+
   // App Window State (for fullscreen preview)
   const [selectedApp, setSelectedApp] = useState<AppItem | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -55,9 +57,9 @@ const App: React.FC = () => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [activeView, setActiveView] = useState<'discover' | 'agents' | 'logs'>('discover');
   const [chatInputValue, setChatInputValue] = useState('');
-  const [selectedAgent, setSelectedAgent] = useState<string>('dashboard');
+  const [selectedAgent, setSelectedAgent] = useState<string>('pi');
   const [availableAgents, setAvailableAgents] = useState<AgentType[]>([]);
-  
+
   // Cell data
   const [piMessages, setPiMessages] = useState<PiMessage[]>([]);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -72,14 +74,15 @@ const App: React.FC = () => {
 
   // ─── Data Fetching ─────────────────────────────────────────────────────────────
   const fetchAllNonChatData = useCallback(async () => {
-    const [msgs, wthr, fund, github, cal, grimoire, projs] = await Promise.all([
+    const [msgs, wthr, fund, github, cal, grimoire, projs, running] = await Promise.all([
       getPiMessages(),
       getMarketWeather(),
       getVanFundData(),
       getGithubActivity(),
       getCalendarData(),
       getGrimoire(),
-      getProjects()
+      getProjects(),
+      getRunningServices()
     ]);
     setPiMessages(msgs);
     setWeather(wthr);
@@ -87,51 +90,45 @@ const App: React.FC = () => {
     setGithubActivity(github);
     if (cal.success) setCalendarEvents(cal.events);
     setProjects(projs);
-    
-    // Update apps list from grimoire
+
+    // Update apps list from grimoire — server + registry is the single source of truth
+    const runningIds = new Set(running.map(s => s.id));
+
     if (grimoire && grimoire.length > 0) {
       setApps(prev => {
-        // Merge grimoire with existing apps to preserve online status if possible
-        const existingMap = new Map(prev.map(app => [app.id, app]));
-        const mergedApps: AppItem[] = [];
-
-        // Merge each grimoire app with existing client app (if any)
-        for (const gApp of grimoire) {
-          const existing = existingMap.get(gApp.id);
-          if (existing) {
-            // Preserve client-side fields from existing
-            const clientFields: (keyof AppItem)[] = [
-              'isOnline', 'status', 'isEmbedded', 'port', 'embeddedUrl', 'badge', 'todoData', 'hasTodo'
-            ];
-            const preserved: Partial<AppItem> = {};
-            for (const field of clientFields) {
-              if (existing[field] !== undefined) {
-                (preserved as any)[field] = existing[field];
-              }
-            }
-            // Merge: server data + preserved client fields
-            const merged: AppItem = { ...gApp, ...preserved };
-            mergedApps.push(merged);
-            existingMap.delete(gApp.id); // mark processed
-          } else {
-            mergedApps.push(gApp);
+        // Keep any optimistic local-only apps (created <10s ago, not yet on server)
+        const serverIds = new Set(grimoire.map(g => g.id));
+        const pendingLocals = prev.filter(local => {
+          if (serverIds.has(local.id)) return false;
+          if (local.id.startsWith('app-')) {
+            const ts = parseInt(local.id.split('-')[1]);
+            if (!isNaN(ts) && Date.now() - ts < 10000) return true;
           }
-        }
+          return false;
+        });
 
-        // Add any remaining existing apps (new local apps not in grimoire)
-        for (const leftover of existingMap.values()) {
-          mergedApps.push(leftover);
-        }
+        // Server apps with running-service status overlaid
+        const serverApps = grimoire.map(app => {
+          const isOnline = runningIds.has(app.id);
+          return {
+            ...app,
+            isOnline,
+            status: (isOnline ? 'active' : 'idle') as Status
+          };
+        });
 
-        return mergedApps;
+        return [...serverApps, ...pendingLocals];
       });
+    } else {
+      // No grimoire results — clear apps (the server is empty)
+      setApps([]);
     }
   }, []);
 
   const fetchTodos = useCallback(async () => {
     const appsWithDirs = apps.filter(a => a.directory).map(a => ({ id: a.id, directory: a.directory! }));
     if (appsWithDirs.length === 0) return;
-    
+
     const todoMap = await getAllTodos(appsWithDirs);
     setApps(prev => prev.map(app => {
       const todoData = todoMap.get(app.id);
@@ -151,10 +148,14 @@ const App: React.FC = () => {
     try {
       const agents = await getAgentTypes();
       setAvailableAgents(agents);
+      // Ensure selectedAgent is in the fetched list; if not, switch to first agent
+      if (selectedAgent && !agents.find(a => a.id === selectedAgent) && agents.length > 0) {
+        setSelectedAgent(agents[0].id);
+      }
     } catch (error) {
       console.error('Failed to fetch agents:', error);
     }
-  }, []);
+  }, [selectedAgent]);
 
   useEffect(() => { fetchAllNonChatData(); }, [fetchAllNonChatData]);
   useEffect(() => { fetchChatHistory(); }, [fetchChatHistory]);
@@ -211,7 +212,7 @@ const App: React.FC = () => {
       if (success) {
         const updatedApp = { ...app, isOnline: true, status: 'active' as Status };
         setApps(prev => prev.map(a => a.id === app.id ? updatedApp : a));
-        
+
         // If embedded, open in fullscreen
         if (app.isEmbedded) {
           setSelectedApp(updatedApp);
@@ -225,16 +226,18 @@ const App: React.FC = () => {
     }
   }, [setApps]);
 
-  const handleDeleteApp = useCallback((id: string) => {
+  const handleDeleteApp = useCallback(async (id: string) => {
     setApps(prev => prev.filter(a => a.id !== id));
     setContextMenu(null);
     setSelectedApp(null);
+    // Remove from server registry so it stays gone
+    await deleteAppFromRegistry(id);
   }, [setApps]);
 
   // Chat handlers for Pi Whisperer
   const handleSendChatMessage = useCallback(async (text: string) => {
     setIsChatLoading(true);
-    
+
     // Optimistically add user message
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -291,20 +294,32 @@ const App: React.FC = () => {
     setStartInFullscreen(false);
   }, []);
 
-  const handleCreateApp = useCallback((newApp: AppItem) => {
-    const appWithId: AppItem = { ...newApp, id: `app-${Date.now()}`, isOnline: false };
+  const handleCreateApp = useCallback(async (newApp: AppItem) => {
+    const timestamp = Date.now();
+    const appWithId: AppItem = {
+      ...newApp,
+      id: `app-${timestamp}`,
+      isOnline: false,
+      lastModified: timestamp
+    };
     setApps(prev => [...prev, appWithId]);
     setSelectedApp(null);
+    // Persist to server
+    await updateAppMetadata(appWithId);
   }, [setApps]);
 
-  const handleUpdateApp = useCallback((updatedApp: AppItem, closeWindow = true) => {
-    setApps(prev => prev.map(app => app.id === updatedApp.id ? updatedApp : app));
+  const handleUpdateApp = useCallback(async (updatedApp: AppItem, closeWindow = true) => {
+    const appWithTimestamp = { ...updatedApp, lastModified: Date.now() };
+    setApps(prev => prev.map(app => app.id === updatedApp.id ? appWithTimestamp : app));
+
     if (closeWindow) {
       setSelectedApp(null);
       setIsEditMode(false);
     } else {
-      setSelectedApp(updatedApp);
+      setSelectedApp(appWithTimestamp);
     }
+    // Persist to server
+    await updateAppMetadata(appWithTimestamp);
   }, [setApps]);
 
   const handleToggleService = useCallback(async (id: string) => {
@@ -318,7 +333,19 @@ const App: React.FC = () => {
   // ─── Render ────────────────────────────────────────────────────────────────────
   return (
     <div className="fixed inset-0 flex flex-col overflow-hidden bg-slate-950">
+      {/* Custom TitleBar for frameless Electron window */}
       <TitleBar />
+
+      {/* Global sidebar expand button - visible when collapsed on any tab */}
+      {sidebarsCollapsed && (
+        <button
+          onClick={() => setSidebarsCollapsed(false)}
+          className="fixed left-4 top-14 z-50 p-2 text-xl hover:scale-110 transition-transform"
+          title="Expand sidebars (S)"
+        >
+          🧙‍♂️
+        </button>
+      )}
 
       {/* Background Mode */}
       <BackgroundMode />
@@ -327,8 +354,8 @@ const App: React.FC = () => {
       <AuraSettings />
 
       {/* MAIN CONTENT */}
-      <main className={`relative z-10 grid ${sidebarsCollapsed ? 'grid-cols-[0%_100%] w-[98%] mx-auto mt-4' : 'grid-cols-[11%_89%] w-[90%] mx-auto mt-6 mb-2'} ultra-glass overflow-hidden transition-all duration-700 h-[55vh] ${selectedApp ? 'blur-xl scale-95 opacity-30 grayscale pointer-events-none' : 'opacity-100 scale-100'}`}>
-        
+      <main className={`relative z-10 grid ${sidebarsCollapsed ? 'grid-cols-[0%_100%] w-[98%] mx-auto mt-4' : 'grid-cols-[11%_89%] w-[90%] mx-auto mt-6 mb-2'} ultra-glass overflow-hidden transition-all duration-700 h-[60vh] ${selectedApp ? 'blur-xl scale-95 opacity-30 grayscale pointer-events-none' : 'opacity-100 scale-100'}`}>
+
         {/* SIDEBAR */}
         <nav className={`main-menu-glass border-r border-white/20 h-full flex flex-col justify-between transition-opacity duration-500 ${sidebarsCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'}`}>
           <div>
@@ -338,7 +365,7 @@ const App: React.FC = () => {
               </div>
               <p className="text-white text-xs font-bold tracking-widest uppercase">Pi</p>
             </div>
-            
+
             <ul className="px-2">
               <li className={`nav-item-glass mb-2 ${activeView === 'discover' ? 'active' : 'opacity-40 hover:opacity-100'}`} onClick={() => setActiveView('discover')}>
                 <a href="#" className="flex flex-col items-center gap-1">
@@ -366,7 +393,7 @@ const App: React.FC = () => {
               </li>
             </ul>
           </div>
-          
+
           <ul className="px-2 pb-6">
             <li className="nav-item-glass opacity-40 hover:opacity-100">
               <a href="#" className="flex flex-col items-center gap-1">
@@ -378,37 +405,21 @@ const App: React.FC = () => {
         </nav>
 
         {/* CONTENT */}
-        <section className={`grid ${sidebarsCollapsed ? 'grid-cols-[100%_0%]' : 'grid-cols-[73%_27%]'}`}>
-          
+        <section className={`grid ${sidebarsCollapsed ? 'grid-cols-[100%_0%]' : 'grid-cols-[73%_27%]'} h-full min-h-0`}>
+
           {/* LEFT CONTENT */}
-          <div className="p-8 overflow-y-auto max-h-[90vh] custom-scrollbar">
-            
+          <div className="p-8 overflow-y-auto h-full custom-scrollbar">
+
             {/* VIEW: DISCOVER */}
             {activeView === 'discover' && (
               <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
-                {/* Header / Search */}
-                <div className="flex items-center justify-between mb-8">
-                  <div className="flex items-center gap-3">
-                    {sidebarsCollapsed && (
-                      <button onClick={() => setSidebarsCollapsed(false)} className="text-xl hover:scale-110 transition-transform" title="Expand sidebars">🧙‍♂️</button>
-                    )}
-                    <h1 className="text-2xl font-bold text-white uppercase tracking-widest">Discover Missions</h1>
-                  </div>
-                  <button
-                    onClick={() => setCommandPaletteOpen(true)}
-                    className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-4 py-2 flex items-center gap-3 transition-all"
-                  >
-                    <span className="text-white/40">🔍</span>
-                    <span className="text-xs text-white/40">Search grimoire...</span>
-                    <kbd className="text-[9px] text-white/30 bg-white/5 px-2 py-0.5 rounded border border-white/10">⌘K</kbd>
-                  </button>
-                </div>
-
                 {/* Primary Stats Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
-                   <SentimentScryerCell weather={weather} />
-                   <VanFundCell data={vanFund} />
-                   <ActivePulseCell activity={githubActivity} />
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
+                  <div className="lg:col-span-2 h-full">
+                    <SentimentScryerCell weather={weather} />
+                  </div>
+                  <VanFundCell data={vanFund} />
+                  <ActivePulseCell activity={githubActivity} />
                 </div>
 
                 {/* Main Calendar View */}
@@ -423,35 +434,35 @@ const App: React.FC = () => {
 
                 {/* App Grimoire Section */}
                 <div className="mb-12">
-                   <AppGrimoireCell 
-                     apps={apps} 
-                     onLaunch={handleLaunchApp} 
-                     onContextMenu={(app, e) => {
-                       e.preventDefault();
-                       setContextMenu({ x: e.clientX, y: e.clientY, app });
-                     }}
-                     onCreate={() => {
-                       const emptyApp: AppItem = {
-                         id: 'new',
-                         name: '',
-                         icon: '🌐',
-                         badge: '',
-                         status: 'idle',
-                         colorClass: 'bg-gradient-to-br from-[#1a1a1a] to-[#0a0a0a]',
-                         url: '#',
-                         isEmbedded: true,
-                         appType: 'web'
-                       };
-                       setSelectedApp(emptyApp);
-                       setIsEditMode(false);
-                       setStartInFullscreen(false);
-                     }}
-                   />
+                  <AppGrimoireCell
+                    apps={apps}
+                    onLaunch={handleLaunchApp}
+                    onContextMenu={(app, e) => {
+                      e.preventDefault();
+                      setContextMenu({ x: e.clientX, y: e.clientY, app });
+                    }}
+                    onCreate={() => {
+                      const emptyApp: AppItem = {
+                        id: 'new',
+                        name: '',
+                        icon: '🌐',
+                        badge: '',
+                        status: 'idle',
+                        colorClass: 'bg-gradient-to-br from-[#1a1a1a] to-[#0a0a0a]',
+                        url: '#',
+                        isEmbedded: true,
+                        appType: 'web'
+                      };
+                      setSelectedApp(emptyApp);
+                      setIsEditMode(false);
+                      setStartInFullscreen(false);
+                    }}
+                  />
                 </div>
 
                 {/* Todo Board */}
                 <div className="mb-12">
-                   <TodoBoardCell />
+                  <TodoBoardKanban />
                 </div>
 
                 {/* Popular / Active Missions (Slider Area) */}
@@ -466,7 +477,7 @@ const App: React.FC = () => {
                         <h3 className="text-xl font-bold text-white mb-2">The Van Quest</h3>
                         <div className="flex items-center gap-2">
                           <div className="flex-1 h-1.5 bg-white/20 rounded-full overflow-hidden">
-                              <div className="h-full bg-emerald-400" style={{ width: `${(vanFund.current / vanFund.target) * 100}%` }}></div>
+                            <div className="h-full bg-emerald-400" style={{ width: `${(vanFund.current / vanFund.target) * 100}%` }}></div>
                           </div>
                           <span className="text-[10px] font-mono text-white/60">{((vanFund.current / vanFund.target) * 100).toFixed(1)}%</span>
                         </div>
@@ -475,8 +486,8 @@ const App: React.FC = () => {
                     <div className="relative h-48 rounded-2xl overflow-hidden border border-white/10">
                       <div className="absolute inset-0 bg-gradient-to-br from-blue-600/40 to-emerald-600/40 opacity-60"></div>
                       <div className="absolute inset-0 p-6 flex flex-col justify-end">
-                          <h3 className="text-xl font-bold text-white mb-2">Sentiment Scryer</h3>
-                          <p className="text-xs text-white/60 line-clamp-2">{weather.vibe}</p>
+                        <h3 className="text-xl font-bold text-white mb-2">Sentiment Scryer</h3>
+                        <p className="text-xs text-white/60 line-clamp-2">{weather.vibe}</p>
                       </div>
                     </div>
                   </div>
@@ -494,7 +505,7 @@ const App: React.FC = () => {
 
           {/* RIGHT CONTENT */}
           <div className={`border-l border-white/20 p-8 flex flex-col transition-all duration-500 ${sidebarsCollapsed ? 'opacity-0 p-0 overflow-hidden border-l-0' : 'opacity-100'}`}>
-            
+
             {/* Recent Heartbeats (Recommended Songs Area) */}
             <div className="flex-1">
               <h2 className="text-sm font-semibold uppercase tracking-widest text-white/50 mb-6">Aether Feedback</h2>
@@ -517,10 +528,10 @@ const App: React.FC = () => {
             <div className="music-player-glass border border-white/20 ritual-pulse">
               <div className="relative mb-6">
                 <div className="w-32 h-32 rounded-full border-4 border-white/10 p-1 flex items-center justify-center bg-white/5 group relative">
-                   <div className="absolute inset-0 rounded-full bg-indigo-500/20 animate-ping"></div>
-                   <div className="w-full h-full rounded-full border-2 border-white/40 flex items-center justify-center relative z-10 overflow-hidden">
-                      <span className="text-5xl">🔮</span>
-                   </div>
+                  <div className="absolute inset-0 rounded-full bg-indigo-500/20 animate-ping"></div>
+                  <div className="w-full h-full rounded-full border-2 border-white/40 flex items-center justify-center relative z-10 overflow-hidden">
+                    <span className="text-5xl">🔮</span>
+                  </div>
                 </div>
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 bg-[#11063a]/70 border-2 border-white rounded-full z-20"></div>
               </div>
@@ -555,115 +566,115 @@ const App: React.FC = () => {
       </main>
 
       {/* SUBTERRANEAN CHAT TRAY - Maximum Abyssal Expansion */}
-      <div className={`fixed bottom-0 left-0 right-0 z-40 px-8 pb-12 pt-4 bg-gradient-to-t from-slate-950/95 via-transparent to-transparent transition-all duration-500 h-[42vh] flex flex-col justify-end ${selectedApp ? 'translate-y-full opacity-0' : 'translate-y-0 opacity-100'}`}>
-         
-         {/* Aether Echoes - Rising high into the created negative space */}
-         <div className="max-w-6xl mx-auto mb-8 space-y-6 flex-1 flex flex-col overflow-y-auto scrollbar-none pointer-events-auto">
-            <div className="flex-1" /> {/* Spacer to push content to bottom when history is small */}
-            {chatHistory.map((msg, idx) => (
-               <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-5 duration-1000 last:mb-2`} style={{ opacity: msg.role === 'assistant' ? (0.4 + (idx / chatHistory.length) * 0.6) : 1 }}>
-                  <div className={`max-w-[92%] px-8 py-4 rounded-[2rem] text-[15px] border backdrop-blur-2xl shadow-[0_20px_60px_-20px_rgba(0,0,0,0.7)] ${msg.role === 'user' ? 'bg-indigo-500/15 border-indigo-400/30 text-indigo-50 text-shadow-sm' : 'bg-white/5 border-white/10 text-white shadow-inner'}`}>
-                     <ReactMarkdown 
-                        components={{
-                           p: ({node, ...props}) => <p className="mb-2 last:mb-0" {...props} />,
-                           code: ({node, inline, ...props}: any) => 
-                              inline 
-                                 ? <code className="bg-white/10 px-1.5 py-0.5 rounded text-indigo-200" {...props} />
-                                 : <pre className="bg-black/40 p-4 rounded-xl overflow-x-auto border border-white/10 my-3"><code {...props} /></pre>,
-                           ul: ({node, ...props}) => <ul className="list-disc ml-6 mb-2" {...props} />,
-                           ol: ({node, ...props}) => <ol className="list-decimal ml-6 mb-2" {...props} />,
-                           li: ({node, ...props}) => <li className="mb-1" {...props} />,
-                           h1: ({node, ...props}) => <h1 className="text-xl font-bold mb-2" {...props} />,
-                           h2: ({node, ...props}) => <h2 className="text-lg font-bold mb-2" {...props} />,
-                           h3: ({node, ...props}) => <h3 className="text-base font-bold mb-2" {...props} />,
-                           blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-white/20 pl-4 italic my-2" {...props} />,
-                           strong: ({node, ...props}) => <strong className="font-bold text-white" {...props} />,
-                           em: ({node, ...props}) => <em className="italic text-white/90" {...props} />,
-                        }}
-                     >
-                        {msg.text}
-                     </ReactMarkdown>
+      <div className={`fixed bottom-0 left-0 right-0 z-40 px-8 pb-12 pt-4 bg-gradient-to-t from-slate-950 via-slate-950/90 to-transparent transition-all duration-500 h-[34vh] flex flex-col justify-end ${selectedApp ? 'translate-y-full opacity-0' : 'translate-y-0 opacity-100'}`}>
 
-                     {/* Astral Preview (Aetheric Mockups) */}
-                     {msg.previewUrl && (
-                        <div className="mt-6 rounded-3xl overflow-hidden border border-white/10 bg-black/40 h-80 relative group/preview">
-                           <iframe 
-                              src={msg.previewUrl} 
-                              className="w-full h-full pointer-events-none" 
-                              title="Code Preview"
-                           />
-                           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover/preview:opacity-100 transition-opacity flex items-end p-4">
-                              <button 
-                                 onClick={() => window.open(msg.previewUrl, '_blank')}
-                                 className="bg-violet-500/80 hover:bg-violet-500 text-xs font-bold uppercase tracking-widest px-6 py-3 rounded-xl text-white backdrop-blur-sm pointer-events-auto transition-all"
-                              >
-                                 Summon Full View
-                              </button>
-                           </div>
-                        </div>
-                     )}
+        {/* Aether Echoes - Rising high into the created negative space */}
+        <div className="max-w-6xl mx-auto mb-8 space-y-6 flex-1 flex flex-col overflow-y-auto scrollbar-none pointer-events-auto">
+          <div className="flex-1" /> {/* Spacer to push content to bottom when history is small */}
+          {chatHistory.map((msg, idx) => (
+            <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-5 duration-1000 last:mb-2`} style={{ opacity: msg.role === 'assistant' ? (0.4 + (idx / chatHistory.length) * 0.6) : 1 }}>
+              <div className={`max-w-[92%] px-8 py-4 rounded-[2rem] text-[15px] border backdrop-blur-2xl shadow-[0_20px_60px_-20px_rgba(0,0,0,0.7)] ${msg.role === 'user' ? 'bg-indigo-500/15 border-indigo-400/30 text-indigo-50 text-shadow-sm' : 'bg-white/5 border-white/10 text-white shadow-inner'}`}>
+                <ReactMarkdown
+                  components={{
+                    p: ({ node, ...props }) => <p className="mb-2 last:mb-0" {...props} />,
+                    code: ({ node, inline, ...props }: any) =>
+                      inline
+                        ? <code className="bg-white/10 px-1.5 py-0.5 rounded text-indigo-200" {...props} />
+                        : <pre className="bg-black/40 p-4 rounded-xl overflow-x-auto border border-white/10 my-3"><code {...props} /></pre>,
+                    ul: ({ node, ...props }) => <ul className="list-disc ml-6 mb-2" {...props} />,
+                    ol: ({ node, ...props }) => <ol className="list-decimal ml-6 mb-2" {...props} />,
+                    li: ({ node, ...props }) => <li className="mb-1" {...props} />,
+                    h1: ({ node, ...props }) => <h1 className="text-xl font-bold mb-2" {...props} />,
+                    h2: ({ node, ...props }) => <h2 className="text-lg font-bold mb-2" {...props} />,
+                    h3: ({ node, ...props }) => <h3 className="text-base font-bold mb-2" {...props} />,
+                    blockquote: ({ node, ...props }) => <blockquote className="border-l-4 border-white/20 pl-4 italic my-2" {...props} />,
+                    strong: ({ node, ...props }) => <strong className="font-bold text-white" {...props} />,
+                    em: ({ node, ...props }) => <em className="italic text-white/90" {...props} />,
+                  }}
+                >
+                  {msg.text}
+                </ReactMarkdown>
+
+                {/* Astral Preview (Aetheric Mockups) */}
+                {msg.previewUrl && (
+                  <div className="mt-6 rounded-3xl overflow-hidden border border-white/10 bg-black/40 h-80 relative group/preview">
+                    <iframe
+                      src={msg.previewUrl}
+                      className="w-full h-full pointer-events-none"
+                      title="Code Preview"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover/preview:opacity-100 transition-opacity flex items-end p-4">
+                      <button
+                        onClick={() => window.open(msg.previewUrl, '_blank')}
+                        className="bg-violet-500/80 hover:bg-violet-500 text-xs font-bold uppercase tracking-widest px-6 py-3 rounded-xl text-white backdrop-blur-sm pointer-events-auto transition-all"
+                      >
+                        Summon Full View
+                      </button>
+                    </div>
                   </div>
-               </div>
-            ))}
-         </div>
-
-         <div className="max-w-4xl mx-auto relative group">
-            <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500/30 to-purple-600/30 rounded-[2.5rem] blur-xl opacity-20 group-hover:opacity-50 transition-opacity duration-1000"></div>
-            <div className="relative flex items-center bg-[#0a0a1a]/80 backdrop-blur-3xl border border-white/20 rounded-[2rem] p-3 shadow-2xl">
-               <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mr-4">
-                  <span className={`text-xl ${isChatLoading ? "animate-spin" : "animate-pulse"}`}>
-                     {isChatLoading ? "⏳" : selectedAgent === 'dashboard' ? "🔮" : "🤖"}
-                  </span>
-               </div>
-               
-               {/* Agent Selector */}
-               {availableAgents.length > 0 && (
-                 <select
-                   value={selectedAgent}
-                   onChange={(e) => setSelectedAgent(e.target.value)}
-                   className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white mr-4 focus:outline-none focus:border-indigo-500/50 capitalize"
-                 >
-                   {availableAgents.map(agent => (
-                     <option key={agent.id} value={agent.id} className="bg-slate-900">
-                       {agent.name}
-                     </option>
-                   ))}
-                 </select>
-               )}
-
-               <input 
-                 type="text"
-                 value={chatInputValue}
-                 onChange={(e) => setChatInputValue(e.target.value)}
-                 onKeyDown={(e) => {
-                    if (e.key === 'Enter' && chatInputValue.trim()) {
-                       handleSendChatMessage(chatInputValue);
-                       setChatInputValue('');
-                    }
-                 }}
-                 placeholder={`Whisper to ${selectedAgent}...`}
-                 className="flex-1 bg-transparent border-none outline-none text-white text-base placeholder:text-white/20 px-3 tracking-wide"
-               />
-               <button 
-                 onClick={() => {
-                   if (chatInputValue.trim()) {
-                     handleSendChatMessage(chatInputValue);
-                     setChatInputValue('');
-                   }
-                 }}
-                 className="p-3 text-white/40 hover:text-white transition-colors"
-               >
-                 {isChatLoading ? <i className="fa fa-spinner animate-spin"></i> : <i className="fa fa-paper-plane"></i>}
-               </button>
-               <button 
-                 onClick={handleClearChat}
-                 className="p-3 text-white/40 hover:text-white transition-colors"
-                 title="Clear chat history"
-               >
-                 <i className="fa fa-times"></i>
-               </button>
+                )}
+              </div>
             </div>
-         </div>
+          ))}
+        </div>
+
+        <div className="max-w-4xl mx-auto relative group">
+          <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500/30 to-purple-600/30 rounded-[2.5rem] blur-xl opacity-20 group-hover:opacity-50 transition-opacity duration-1000"></div>
+          <div className="relative flex items-center bg-[#0a0a1a]/80 backdrop-blur-3xl border border-white/20 rounded-[2rem] p-3 shadow-2xl">
+            <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mr-4">
+              <span className={`text-xl ${isChatLoading ? "animate-spin" : "animate-pulse"}`}>
+                {isChatLoading ? "⏳" : selectedAgent === 'dashboard' ? "🔮" : "🤖"}
+              </span>
+            </div>
+
+            {/* Agent Selector */}
+            {availableAgents.length > 0 && (
+              <select
+                value={selectedAgent}
+                onChange={(e) => setSelectedAgent(e.target.value)}
+                className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white mr-4 focus:outline-none focus:border-indigo-500/50 capitalize"
+              >
+                {availableAgents.map(agent => (
+                  <option key={agent.id} value={agent.id} className="bg-slate-900">
+                    {agent.name}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            <input
+              type="text"
+              value={chatInputValue}
+              onChange={(e) => setChatInputValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && chatInputValue.trim()) {
+                  handleSendChatMessage(chatInputValue);
+                  setChatInputValue('');
+                }
+              }}
+              placeholder={`Whisper to ${availableAgents.find(a => a.id === selectedAgent)?.name || selectedAgent}...`}
+              className="flex-1 bg-transparent border-none outline-none text-white text-base placeholder:text-white/20 px-3 tracking-wide"
+            />
+            <button
+              onClick={() => {
+                if (chatInputValue.trim()) {
+                  handleSendChatMessage(chatInputValue);
+                  setChatInputValue('');
+                }
+              }}
+              className="p-3 text-white/40 hover:text-white transition-colors"
+            >
+              {isChatLoading ? <i className="fa fa-spinner animate-spin"></i> : <i className="fa fa-paper-plane"></i>}
+            </button>
+            <button
+              onClick={handleClearChat}
+              className="p-3 text-white/40 hover:text-white transition-colors"
+              title="Clear chat history"
+            >
+              <i className="fa fa-times"></i>
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Command Palette */}
@@ -682,7 +693,7 @@ const App: React.FC = () => {
           app={contextMenu.app}
           onClose={() => setContextMenu(null)}
           onToggle={() => { handleLaunchApp(contextMenu.app); setContextMenu(null); }}
-          onEdit={() => { 
+          onEdit={() => {
             setSelectedApp(contextMenu.app);
             setIsEditMode(true);
             setContextMenu(null);

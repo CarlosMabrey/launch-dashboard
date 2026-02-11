@@ -80,18 +80,18 @@ export default function PiWhispererCell({ chatHistory, onSend, onClear, isLoadin
             >
               <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.text}</p>
 
-              {/* Astral Preview (Aetheric Mockups) - Always visible */}
-              {msg.previewUrl && (
-                <div className="mt-3 rounded-xl overflow-hidden border border-white/10 bg-black/40 h-48 relative">
+              {/* Render inline HTML previews (multiple supported) */}
+              {(msg.previews && msg.previews.length > 0 ? msg.previews : (msg.previewUrl ? [{ url: msg.previewUrl, code: msg.previewCode }] : [])).map((preview, idx) => (
+                <div key={idx} className="mt-3 rounded-xl overflow-hidden border border-white/10 bg-black/40 h-48 relative">
                   <iframe
-                    src={msg.previewUrl}
+                    src={preview.url}
                     className="w-full h-full"
                     title="Code Preview"
                     style={{ pointerEvents: 'auto' }}
                   />
                   <div className="absolute top-2 right-2">
                     <button
-                      onClick={() => window.open(msg.previewUrl, '_blank')}
+                      onClick={() => window.open(preview.url, '_blank')}
                       className="bg-violet-500/80 hover:bg-violet-500 text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-lg text-white backdrop-blur-sm transition-colors"
                       title="Open in new tab"
                     >
@@ -99,7 +99,7 @@ export default function PiWhispererCell({ chatHistory, onSend, onClear, isLoadin
                     </button>
                   </div>
                 </div>
-              )}
+              ))}
 
               <span className={`text-[9px] mt-1 block ${msg.role === 'user' ? 'text-violet-300/50' : 'text-white/30'}`}>
                 {formatTime(msg.time)}

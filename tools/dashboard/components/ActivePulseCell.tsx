@@ -1,24 +1,17 @@
 import React, { useMemo } from 'react';
 import { GithubActivity } from '../services/piService';
 
-const GLASS = 'bg-white/5 backdrop-blur-xl border border-white/10';
-const ACCENT = {
-  emerald: 'from-emerald-500/20 to-emerald-600/5',
-  blue: 'from-sky-500/20 to-sky-600/5',
-  red: 'from-rose-500/20 to-rose-600/5',
-  purple: 'from-violet-500/20 to-violet-600/5',
-  amber: 'from-amber-500/20 to-amber-600/5',
-};
-
 interface ActivePulseProps {
   activity: GithubActivity;
 }
 
-export default function ActivePulseCell({ activity }: ActivePulseProps) {
+export function ActivePulseCell({ activity }: ActivePulseProps) {
   // Generate last 7 weeks of data
   const weeks = useMemo(() => {
     const result: number[][] = [];
     const today = new Date();
+    if (!activity || !activity.dailyHistory) return [];
+
     for (let w = 6; w >= 0; w--) {
       const week: number[] = [];
       for (let d = 0; d < 7; d++) {
@@ -30,30 +23,37 @@ export default function ActivePulseCell({ activity }: ActivePulseProps) {
       result.push(week);
     }
     return result;
-  }, [activity.dailyHistory]);
+  }, [activity]);
 
   const getColor = (count: number) => {
     if (count === 0) return 'bg-white/5';
-    if (count <= 2) return 'bg-emerald-900/60';
-    if (count <= 4) return 'bg-emerald-700/70';
-    if (count <= 6) return 'bg-emerald-500/80';
-    return 'bg-emerald-400';
+    if (count <= 2) return 'bg-sky-900/60';
+    if (count <= 4) return 'bg-sky-700/70';
+    if (count <= 6) return 'bg-sky-500/80';
+    return 'bg-sky-400';
   };
 
+  if (!activity) return null;
+
   return (
-    <div className={`${GLASS} rounded-2xl p-5 bg-gradient-to-br ${ACCENT.blue}`}>
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-white/50">Active Pulse</h3>
-        <span className="text-sky-400 text-sm font-bold">{activity.totalContributions}</span>
+    <div className="premium-card p-4 group h-full">
+      <div className="glow-orb bg-sky-500 top-1/2 left-1/2"></div>
+
+      <div className="flex justify-between items-start mb-4 relative z-10">
+        <div>
+          <span className="status-badge text-sky-400">Heartbeat</span>
+          <h3 className="text-lg font-semibold mt-1 text-white">Active Pulse</h3>
+        </div>
+        <div className="text-xl filter drop-shadow-[0_0_8px_rgba(0,242,255,0.6)] animate-pulse">⚡</div>
       </div>
 
-      <div className="flex gap-1 justify-center">
+      <div className="flex gap-1 justify-center relative z-10">
         {weeks.map((week, wi) => (
           <div key={wi} className="flex flex-col gap-1">
             {week.map((count, di) => (
               <div
                 key={di}
-                className={`w-3 h-3 rounded-sm ${getColor(count)} transition-colors`}
+                className={`w-2 h-2 rounded-sm ${getColor(count)} transition-all duration-300 hover:scale-125 hover:z-20`}
                 title={`${count} contributions`}
               />
             ))}
@@ -61,12 +61,15 @@ export default function ActivePulseCell({ activity }: ActivePulseProps) {
         ))}
       </div>
 
-      <div className="flex items-center justify-center gap-2 mt-3 text-[10px] text-white/30">
-        <span>Less</span>
-        {[0, 2, 4, 6, 8].map(n => (
-          <div key={n} className={`w-2.5 h-2.5 rounded-sm ${getColor(n)}`} />
-        ))}
-        <span>More</span>
+      <div className="mt-3 flex items-center justify-between relative z-10">
+        <div className="flex items-center gap-1 text-[9px] text-white/30 uppercase tracking-widest font-mono">
+          <span>{activity.totalContributions} Hits</span>
+        </div>
+        <div className="flex gap-0.5">
+          {[0, 8].map(n => (
+            <div key={n} className={`w-1.5 h-1.5 rounded-full ${getColor(n)}`} />
+          ))}
+        </div>
       </div>
     </div>
   );

@@ -5,13 +5,13 @@
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "dev": "concurrently --kill-others \"npm run server\" \"npm run client\"",
     "client": "vite",
     "server": "node server.js",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "electron": "electron .",
-    "electron-dev": "concurrently \"npm run server\" \"npm run client\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron-dev": "concurrently --kill-others \"npm run server\" \"npm run client\" \"wait-on http://localhost:5173 && electron .\"",
     "electron-build": "npm run build && electron-builder",
     "dist": "npm run build && electron-builder --publish=never"
   },

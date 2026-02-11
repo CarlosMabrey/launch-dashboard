@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startService: (data) => ipcRenderer.invoke('service-start', data),
   stopService: (id) => ipcRenderer.invoke('service-stop', { id }),
   getServiceStatus: (id) => ipcRenderer.invoke('service-status', { id }),
+  getRunningServices: () => ipcRenderer.invoke('services-list'),
   onServiceExit: (callback) => {
     const subscription = (event, data) => callback(data);
     ipcRenderer.on('service-exit', subscription);

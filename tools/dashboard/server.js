@@ -23,7 +23,8 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization'],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
 }));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Store running processes
 const runningProcesses = new Map();
@@ -99,17 +100,40 @@ const OPENCLAW_GATEWAY = {
     token: resolveOpenClawToken()
 };
 
+// Map dashboard agent selection to system prompts and actual gateway agent
+function getAgentConfig(agentId) {
+    switch (agentId) {
+        case 'coding':
+            return {
+                systemPrompt: 'You are a coding specialist. Focus on software development, debugging, code reviews, and technical implementation. Provide concise, practical solutions with code examples when appropriate. Use best practices and explain technical decisions clearly.',
+                gatewayAgentId: 'main'
+            };
+        case 'research':
+            return {
+                systemPrompt: 'You are a research specialist. Your role is to gather, synthesize, and summarize information from various sources. Use web search to find up-to-date data, provide citations, and present balanced perspectives. Focus on delivering well-structured, factual reports with clear sourcing.',
+                gatewayAgentId: 'main'
+            };
+        case 'pi':
+        case 'dashboard':
+        default:
+            return { systemPrompt: null, gatewayAgentId: 'main' };
+    }
+}
+
 /**
  * Spawn a background agent session via OpenClaw Gateway
  * Uses the `openclaw gateway call sessions_spawn` CLI
  */
 async function spawnAgentSession(task, agentId, model, instructions) {
-    // Build the task description for the agent
-    const taskDescription = `Execute task: ${task.title}\n\nDescription: ${task.description || 'No description provided.'}\n\nAdditional instructions: ${instructions || 'No additional instructions.'}`;
+    // Map the selected agent to a persona prefix and actual gateway agent
+    const { systemPrompt, gatewayAgentId: actualAgentId } = getAgentConfig(agentId);
+    // Build the task description, prepending persona if provided
+    const personaPrefix = systemPrompt ? `${systemPrompt}\n\n` : '';
+    const taskDescription = personaPrefix + `Execute task: ${task.title}\n\nDescription: ${task.description || 'No description provided.'}\n\nAdditional instructions: ${instructions || 'No additional instructions.'}`;
 
     const params = {
         task: taskDescription,
-        agentId: agentId || 'pi',
+        agentId: actualAgentId, // always use main agent in gateway
         label: `Todo: ${task.title}`
     };
     if (model) params.model = model;
@@ -179,31 +203,62 @@ let githubActivity = {
 const SNIPPETS_FILE = path.join(process.cwd(), 'snippets.json');
 
 // ============================================
-// App Grimoire (D:\Pi Scanner)
+// App Grimoire (D:\\Pi Scanner + Registry)
 // ============================================
 
-const scanGrimoire = (dir, depth = 0) => {
-    if (depth > 2) return []; // Limit depth to avoid infinite loops or scanning too deep
-    let appsList = [];
+// Persistent registry for manually-added apps and config overrides.
+// This file is the source of truth for user-created apps and
+// any customization applied to auto-discovered apps.
+const GRIMOIRE_REGISTRY_PATH = path.join(process.cwd(), 'grimoire-registry.json');
+
+const loadGrimoireRegistry = () => {
     try {
+        if (fs.existsSync(GRIMOIRE_REGISTRY_PATH)) {
+            return JSON.parse(fs.readFileSync(GRIMOIRE_REGISTRY_PATH, 'utf8'));
+        }
+    } catch (e) {
+        console.error('Error loading grimoire registry:', e);
+    }
+    return { apps: {}, hidden: [] }; // apps: id -> metadata, hidden: array of IDs to exclude from scan
+};
+
+const saveGrimoireRegistry = (registry) => {
+    try {
+        fs.writeFileSync(GRIMOIRE_REGISTRY_PATH, JSON.stringify(registry, null, 2));
+    } catch (e) {
+        console.error('Error saving grimoire registry:', e);
+    }
+};
+
+// Initialize registry on startup
+let grimoireRegistry = loadGrimoireRegistry();
+
+const scanDirectory = (dir, depth = 0, currentDepth = 0) => {
+    if (currentDepth > depth) return [];
+    let appsList = [];
+
+    // Safety check: Don't scan node_modules or .git
+    if (dir.includes('node_modules') || dir.includes('.git')) return [];
+
+    try {
+        if (!fs.existsSync(dir)) return [];
         const items = fs.readdirSync(dir, { withFileTypes: true });
-        
+
         for (const item of items) {
-            if (item.isDirectory() && !item.name.startsWith('.') && item.name !== 'node_modules') {
+            if (item.isDirectory() && !item.name.startsWith('.')) {
                 const fullPath = path.join(dir, item.name);
                 const metadataPath = path.join(fullPath, 'metadata.json');
                 const todoPath = path.join(fullPath, 'todo.md');
-                
-                let appData = null;
-                
+
+                // Check for metadata first (explicit app definition)
                 if (fs.existsSync(metadataPath)) {
                     try {
                         const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
-                        appData = {
+                        const appData = {
                             id: metadata.id || item.name,
                             name: metadata.name || item.name,
                             icon: metadata.icon || '📦',
-                            badge: metadata.badge || (dir.toLowerCase().includes('tools') ? 'TOOL' : 'PROJECT'),
+                            badge: metadata.badge || 'APP',
                             status: 'idle',
                             colorClass: metadata.colorClass || 'bg-blue-500',
                             url: metadata.url || '',
@@ -212,18 +267,23 @@ const scanGrimoire = (dir, depth = 0) => {
                             isOnline: false,
                             isEmbedded: metadata.isEmbedded || false,
                             appType: metadata.appType || 'terminal',
-                            hasTodo: fs.existsSync(todoPath)
+                            embeddedUrl: metadata.embeddedUrl || undefined,
+                            port: metadata.port || undefined,
+                            hasTodo: fs.existsSync(todoPath),
+                            source: 'scanned'
                         };
+                        appsList.push(appData);
                     } catch (e) {
                         console.error(`Error parsing metadata in ${fullPath}:`, e);
                     }
-                } else if (fs.existsSync(todoPath)) {
-                    // Fallback to todo.md if metadata.json is missing
-                    appData = {
+                }
+                // Fallback to todo.md if metadata.json is missing & it's not a generic container folder
+                else if (fs.existsSync(todoPath)) {
+                    const appData = {
                         id: item.name,
                         name: item.name.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
                         icon: '📝',
-                        badge: (dir.toLowerCase().includes('tools') ? 'TOOL' : 'PROJECT'),
+                        badge: 'PROJECT',
                         status: 'idle',
                         colorClass: 'bg-emerald-500',
                         url: '',
@@ -231,28 +291,221 @@ const scanGrimoire = (dir, depth = 0) => {
                         isOnline: false,
                         isEmbedded: false,
                         appType: 'terminal',
-                        hasTodo: true
+                        hasTodo: true,
+                        source: 'scanned'
                     };
-                }
-                
-                if (appData) {
                     appsList.push(appData);
-                } else {
-                    // Recurse into subdirectories like 'tools' or 'projects'
-                    appsList = [...appsList, ...scanGrimoire(fullPath, depth + 1)];
+                }
+                // Fallback: Check for executable scripts (Folder Mode)
+                else {
+                    try {
+                        const dirFiles = fs.readdirSync(fullPath);
+                        const scriptFile = dirFiles.find(f => f.match(/\.(bat|cmd|ps1|exe)$/i));
+
+                        if (scriptFile) {
+                            const appData = {
+                                id: item.name,
+                                name: item.name.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+                                icon: '🚀',
+                                badge: 'SCRIPT',
+                                status: 'idle',
+                                colorClass: 'bg-amber-600',
+                                url: '',
+                                command: scriptFile.endsWith('.ps1') ? `powershell -File .\\${scriptFile}` : `.\\${scriptFile}`,
+                                directory: fullPath,
+                                isOnline: false,
+                                isEmbedded: false,
+                                appType: 'terminal',
+                                hasTodo: false,
+                                source: 'scanned'
+                            };
+                            appsList.push(appData);
+                        }
+                    } catch (e) {
+                        // ignore access errors
+                    }
+                }
+
+                // Recurse deeper even if we found an app (e.g. monorepos)? 
+                // For now, if we found an app, we assume it's the leaf app. 
+                // If not, we dive deeper.
+                if (!fs.existsSync(metadataPath)) {
+                    appsList = [...appsList, ...scanDirectory(fullPath, depth, currentDepth + 1)];
                 }
             }
         }
     } catch (e) {
-        console.error(`Error scanning grimoire in ${dir}:`, e);
+        console.error(`Error scanning directory ${dir}:`, e);
     }
     return appsList;
 };
 
+const scanGrimoire = () => {
+    // Explicitly scan known app repositories (NOT skills — those aren't apps)
+    const toolsApps = scanDirectory(path.join(PI_ROOT, 'tools'), 3);
+    const projectsApps = scanDirectory(path.join(PI_ROOT, 'projects'), 3);
+    const vortexApps = scanDirectory(path.join(PI_ROOT, 'external-vortex'), 2);
+
+    // Build scanned apps map (deduplicate by ID)
+    const scannedMap = new Map();
+    for (const app of [...toolsApps, ...projectsApps, ...vortexApps]) {
+        scannedMap.set(app.id, app);
+    }
+
+    // Reload registry from disk (always fresh)
+    grimoireRegistry = loadGrimoireRegistry();
+    const hiddenIds = new Set(grimoireRegistry.hidden || []);
+
+    // Remove hidden apps from scanned results
+    for (const id of hiddenIds) {
+        scannedMap.delete(id);
+    }
+
+    // Merge: registry overrides scanned apps, and adds any registry-only apps
+    const finalMap = new Map(scannedMap);
+
+    for (const [id, regApp] of Object.entries(grimoireRegistry.apps)) {
+        // Skip hidden apps even if they're in the registry
+        if (hiddenIds.has(id)) continue;
+
+        if (finalMap.has(id)) {
+            // Scanned app exists — merge registry overrides on top
+            const scanned = finalMap.get(id);
+            finalMap.set(id, {
+                ...scanned,
+                ...regApp,
+                directory: regApp.directory || scanned.directory,
+                hasTodo: scanned.hasTodo,
+                source: 'merged'
+            });
+        } else {
+            // Registry-only app (manually added, or app whose directory was removed)
+            finalMap.set(id, {
+                ...regApp,
+                status: 'idle',
+                isOnline: false,
+                hasTodo: false,
+                source: 'registry'
+            });
+        }
+    }
+
+    return Array.from(finalMap.values());
+};
+
+
+
 app.get('/api/pi/grimoire', (req, res) => {
-    const appsList = scanGrimoire(PI_ROOT);
+    const appsList = scanGrimoire();
     res.json(appsList);
 });
+
+
+app.post('/api/pi/grimoire/update', (req, res) => {
+    const appData = req.body;
+    if (!appData.id) {
+        return res.status(400).json({ success: false, error: 'ID is required' });
+    }
+
+    try {
+        let saveDir = appData.directory;
+
+        // Handle URL apps or apps without a specific directory
+        if (!saveDir || saveDir === '#' || saveDir === '') {
+            saveDir = path.join(PI_ROOT, 'external-vortex', appData.id);
+        }
+
+        // Prepare metadata for saving (remove transient fields like isOnline, status, todoData)
+        const metadata = {
+            id: appData.id,
+            name: appData.name,
+            icon: appData.icon,
+            badge: appData.badge,
+            colorClass: appData.colorClass,
+            url: appData.url,
+            command: appData.command,
+            isEmbedded: appData.isEmbedded,
+            appType: appData.appType,
+            embeddedUrl: appData.embeddedUrl,
+            port: appData.port,
+            directory: saveDir
+        };
+
+        // Also write metadata.json to the app's directory if it exists/is writable
+        try {
+            if (!fs.existsSync(saveDir)) {
+                fs.mkdirSync(saveDir, { recursive: true });
+            }
+            const metadataPath = path.join(saveDir, 'metadata.json');
+            // Don't save base64 icon blobs into filesystem metadata (too large)
+            // Save them only in the registry
+            const fsMetadata = { ...metadata };
+            if (fsMetadata.icon && fsMetadata.icon.length > 500) {
+                fsMetadata.icon = '📦'; // Placeholder in filesystem; real icon in registry
+            }
+            fs.writeFileSync(metadataPath, JSON.stringify(fsMetadata, null, 2));
+            console.log(`✅ Metadata.json persisted at: ${metadataPath}`);
+        } catch (fsErr) {
+            console.warn(`⚠️ Couldn't write metadata.json to ${saveDir}: ${fsErr.message}`);
+        }
+
+        // Always save to the central registry (authoritative source)
+        grimoireRegistry = loadGrimoireRegistry();
+        grimoireRegistry.apps[appData.id] = metadata;
+        saveGrimoireRegistry(grimoireRegistry);
+        console.log(`✅ Registry updated for [${appData.name}] (id: ${appData.id})`);
+
+        res.json({ success: true, message: `App saved: ${appData.name}`, directory: saveDir });
+    } catch (e) {
+        console.error('Error updating grimoire:', e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.delete('/api/pi/grimoire/:id', (req, res) => {
+    const { id } = req.params;
+    try {
+        grimoireRegistry = loadGrimoireRegistry();
+        const appName = (grimoireRegistry.apps[id]?.name) || id;
+
+        // Remove from registry apps if present
+        if (grimoireRegistry.apps[id]) {
+            delete grimoireRegistry.apps[id];
+        }
+
+        // Add to hidden list so filesystem-scanned apps don't reappear
+        if (!grimoireRegistry.hidden) grimoireRegistry.hidden = [];
+        if (!grimoireRegistry.hidden.includes(id)) {
+            grimoireRegistry.hidden.push(id);
+        }
+
+        saveGrimoireRegistry(grimoireRegistry);
+        console.log(`🗑️ Hidden [${appName}] (id: ${id}) — won't reappear from scans`);
+        res.json({ success: true });
+    } catch (e) {
+        console.error('Error deleting from grimoire:', e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// Unhide an app (restore a previously hidden app)
+app.post('/api/pi/grimoire/unhide/:id', (req, res) => {
+    const { id } = req.params;
+    try {
+        grimoireRegistry = loadGrimoireRegistry();
+        if (grimoireRegistry.hidden) {
+            grimoireRegistry.hidden = grimoireRegistry.hidden.filter(h => h !== id);
+            saveGrimoireRegistry(grimoireRegistry);
+            console.log(`👁️ Unhidden [${id}] — will reappear on next scan`);
+        }
+        res.json({ success: true });
+    } catch (e) {
+        console.error('Error unhiding app:', e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+
 
 const loadSnippets = () => {
     try {
@@ -404,9 +657,9 @@ async function getCalendarEventsInternal(calendarId = DEFAULT_CALENDAR_ID) {
     try {
         if (!fs.existsSync(CALENDAR_CREDENTIALS_PATH)) {
             console.warn('⚠️ Google Calendar credentials not found at:', CALENDAR_CREDENTIALS_PATH);
-            return { 
-                success: false, 
-                error: 'Credentials missing', 
+            return {
+                success: false,
+                error: 'Credentials missing',
                 mock: true,
                 events: [
                     { id: '1', summary: 'Connect Google Calendar', start: { dateTime: new Date().toISOString() }, description: 'Add service-account.json to dashboard root' },
@@ -548,19 +801,228 @@ app.delete('/api/pi/calendar/event/:eventId', async (req, res) => {
 });
 
 // ============================================
+// AI Calendar Command Integration
+// ============================================
+
+// Use Gemini to interpret calendar commands from chat
+async function interpretCalendarCommand(text) {
+    const prompt = `You are a calendar command interpreter for a voice/chat assistant. Extract the user's intended calendar operation.
+
+User message: "${text}"
+
+Return a JSON object with these fields:
+- action: "create" | "update" | "delete" | "list" | null (if not a calendar request)
+- event: { summary, start, end, description, location } for create/update (start and end should be ISO 8601 strings in America/Denver timezone; if end missing, set to 1 hour after start)
+- eventId: string identifier for update/delete (if user refers by description, leave blank)
+- resolveReferences: boolean (true if user refers to an event by description like "the meeting with John" and you need to match it)
+- listFilter: { today?: boolean, thisWeek?: boolean, start?: ISO, end?: ISO } for list action
+
+Only return the JSON, no other text.`;
+
+    try {
+        const result = await model.generateContent(prompt);
+        let jsonText = result.response.text().trim();
+        // Extract JSON from possible markdown code block
+        const jsonMatch = jsonText.match(/```json\n?([\s\S]*?)\n?```/) || jsonText.match(/{[\s\S]*}/);
+        if (jsonMatch) {
+            jsonText = jsonMatch[1] || jsonMatch[0];
+        }
+        const parsed = JSON.parse(jsonText);
+        return parsed;
+    } catch (error) {
+        console.error('Calendar interpretation error:', error);
+        return { action: null };
+    }
+}
+
+// Direct calendar operation helpers (mirroring the API endpoints but usable internally)
+async function createCalendarEventDirect(calendarId, eventBody) {
+    try {
+        if (!fs.existsSync(CALENDAR_CREDENTIALS_PATH)) {
+            throw new Error('Calendar credentials missing');
+        }
+        const auth = new google.auth.GoogleAuth({
+            keyFile: CALENDAR_CREDENTIALS_PATH,
+            scopes: ['https://www.googleapis.com/auth/calendar'],
+        });
+        const calendar = google.calendar({ version: 'v3', auth });
+        const response = await calendar.events.insert({
+            calendarId,
+            requestBody: eventBody,
+        });
+        return response.data;
+    } catch (error) {
+        console.error('Error creating calendar event:', error);
+        throw error;
+    }
+}
+
+async function updateCalendarEventDirect(calendarId, eventId, eventBody) {
+    try {
+        if (!fs.existsSync(CALENDAR_CREDENTIALS_PATH)) {
+            throw new Error('Calendar credentials missing');
+        }
+        const auth = new google.auth.GoogleAuth({
+            keyFile: CALENDAR_CREDENTIALS_PATH,
+            scopes: ['https://www.googleapis.com/auth/calendar'],
+        });
+        const calendar = google.calendar({ version: 'v3', auth });
+        const response = await calendar.events.update({
+            calendarId,
+            eventId,
+            requestBody: eventBody,
+        });
+        return response.data;
+    } catch (error) {
+        console.error('Error updating calendar event:', error);
+        throw error;
+    }
+}
+
+async function deleteCalendarEventDirect(calendarId, eventId) {
+    try {
+        if (!fs.existsSync(CALENDAR_CREDENTIALS_PATH)) {
+            throw new Error('Calendar credentials missing');
+        }
+        const auth = new google.auth.GoogleAuth({
+            keyFile: CALENDAR_CREDENTIALS_PATH,
+            scopes: ['https://www.googleapis.com/auth/calendar'],
+        });
+        const calendar = google.calendar({ version: 'v3', auth });
+        await calendar.events.delete({
+            calendarId,
+            eventId,
+        });
+        return true;
+    } catch (error) {
+        console.error('Error deleting calendar event:', error);
+        throw error;
+    }
+}
+
+async function listCalendarEventsDirect(calendarId, timeMin, maxResults = 50) {
+    try {
+        if (!fs.existsSync(CALENDAR_CREDENTIALS_PATH)) {
+            console.warn('Google Calendar credentials not found');
+            return { success: false, error: 'Credentials missing', mock: true, events: [] };
+        }
+        const auth = new google.auth.GoogleAuth({
+            keyFile: CALENDAR_CREDENTIALS_PATH,
+            scopes: ['https://www.googleapis.com/auth/calendar'],
+        });
+        const calendar = google.calendar({ version: 'v3', auth });
+        const res = await calendar.events.list({
+            calendarId,
+            timeMin: timeMin || new Date().toISOString(),
+            maxResults,
+            singleEvents: true,
+            orderBy: 'startTime',
+        });
+        const events = (res.data.items || []).map(event => ({
+            id: event.id,
+            summary: event.summary,
+            start: { dateTime: event.start?.dateTime, date: event.start?.date },
+            end: { dateTime: event.end?.dateTime, date: event.end?.date },
+            description: event.description,
+            location: event.location,
+        }));
+        return { success: true, events };
+    } catch (error) {
+        console.error('Error listing calendar events:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+// Execute calendar operation from parsed intent
+async function executeCalendarOperation(intent, calendarId = DEFAULT_CALENDAR_ID) {
+    try {
+        switch (intent.action) {
+            case 'create':
+                if (!intent.event?.start) throw new Error('Missing start time for event creation');
+                const created = await createCalendarEventDirect(calendarId, intent.event);
+                return {
+                    success: true,
+                    action: 'created',
+                    event: created,
+                    summary: `Created event: ${intent.event.summary}`
+                };
+            case 'update':
+                if (!intent.eventId && !intent.resolveReferences) throw new Error('Missing eventId for update');
+                const updated = await updateCalendarEventDirect(calendarId, intent.eventId, intent.event);
+                return {
+                    success: true,
+                    action: 'updated',
+                    event: updated,
+                    summary: `Updated event: ${intent.event.summary || intent.eventId}`
+                };
+            case 'delete':
+                if (!intent.eventId) throw new Error('Missing eventId for delete');
+                await deleteCalendarEventDirect(calendarId, intent.eventId);
+                return {
+                    success: true,
+                    action: 'deleted',
+                    summary: `Deleted event: ${intent.eventId}`
+                };
+            case 'list':
+                let timeMin, timeMax;
+                if (intent.listFilter) {
+                    const now = new Date();
+                    if (intent.listFilter.today) {
+                        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                        timeMin = startOfDay.toISOString();
+                        const endOfDay = new Date(startOfDay);
+                        endOfDay.setDate(endOfDay.getDate() + 1);
+                        timeMax = endOfDay.toISOString();
+                    } else if (intent.listFilter.thisWeek) {
+                        const day = now.getDay();
+                        const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+                        const monday = new Date(now.setDate(diff));
+                        monday.setHours(0, 0, 0, 0);
+                        timeMin = monday.toISOString();
+                        const nextMonday = new Date(monday);
+                        nextMonday.setDate(nextMonday.getDate() + 7);
+                        timeMax = nextMonday.toISOString();
+                    } else {
+                        timeMin = intent.listFilter.start;
+                        timeMax = intent.listFilter.end;
+                    }
+                }
+                const listResult = await listCalendarEventsDirect(calendarId, timeMin, 50);
+                if (!listResult.success) throw new Error(listResult.error);
+                const events = listResult.events;
+                const eventLines = events.map(e => {
+                    const start = e.start.dateTime || e.start.date;
+                    return `• ${e.summary} (${new Date(start).toLocaleString()})`;
+                }).join('\n');
+                return {
+                    success: true,
+                    action: 'listed',
+                    events,
+                    summary: `Found ${events.length} events:\n${eventLines || '(none)'}`
+                };
+            default:
+                return { success: false, action: null, summary: 'Not a calendar command' };
+        }
+    } catch (error) {
+        console.error('Calendar operation error:', error);
+        return { success: false, action: intent?.action, error: error.message };
+    }
+}
+
+// ============================================
 // AI Log Summarizer API
 // ============================================
 
 app.post('/api/pi/summarize-logs', async (req, res) => {
     const { appId, logs } = req.body;
-    
+
     if (!logs || !Array.isArray(logs)) {
         return res.status(400).json({ error: 'Logs array is required' });
     }
 
     try {
         const logText = logs.map(l => `[${new Date(l.time).toLocaleTimeString()}] ${l.text}`).join('\n');
-        
+
         const prompt = `You are a helpful AI assistant for a software developer. 
 Summarize the following application logs for the app "${appId}". 
 Highlight any errors, warnings, or significant lifecycle events (startups, connections).
@@ -671,7 +1133,7 @@ app.post('/api/pi/chat', async (req, res) => {
     <h1>Test Manifested</h1>
 </body>
 </html>`;
-        
+
         const piResponse = {
             id: `pi-test-${Date.now()}`,
             role: 'assistant',
@@ -683,23 +1145,117 @@ app.post('/api/pi/chat', async (req, res) => {
         return res.json({ success: true, userMessage, piResponse, history });
     }
 
+    // Scan user message for HTML blocks (both fenced and bare) to generate immediate previews
+    const userPreviews = [];
+
+    // Fenced blocks in user message
+    const userFencedRegex = /```(?:html|xml)?\s*([\s\S]*?)```/gi;
+    let userFencedMatch;
+    while ((userFencedMatch = userFencedRegex.exec(message)) !== null) {
+        const code = userFencedMatch[1].trim();
+        if (code.includes('<') && (code.includes('</') || code.includes('/>'))) {
+            const filename = `preview-${crypto.randomUUID().slice(0, 8)}.html`;
+            const fullPath = path.join(MOCKUPS_DIR, filename);
+            let html = code;
+            if (!code.toLowerCase().includes('<!doctype') && !code.toLowerCase().includes('<html>')) {
+                html = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #0c0c0c; color: white; font-family: sans-serif; padding: 20px; }
+    </style>
+</head>
+<body>
+    ${code}
+</body>
+</html>`;
+            }
+            try {
+                fs.writeFileSync(fullPath, html);
+                userPreviews.push({ url: `http://localhost:3005/mockups/${filename}`, code: html });
+            } catch (e) {
+                console.error('Failed to write user preview:', e);
+            }
+        }
+    }
+
+    // Bare HTML elements in user message (skip fenced regions)
+    let residualUser = message.replace(userFencedRegex, '___FENCED_BLOCK_PLACEHOLDER___');
+    const userBareHtmlRegex = /<(div|svg|section|article|aside|main|nav|header|footer|table|form|ul|ol|li)(\s[^>]*)?>[\s\S]*?<\/\1>/gi;
+    let userBareMatch;
+    while ((userBareMatch = userBareHtmlRegex.exec(residualUser)) !== null) {
+        const fullHtml = userBareMatch[0];
+        if (fullHtml.includes('___FENCED_BLOCK_PLACEHOLDER___')) continue;
+        // Heuristic: likely a widget if it has a style attribute (reduces false positives)
+        if (!/(style|class)=/i.test(fullHtml)) continue;
+        const filename = `preview-${crypto.randomUUID().slice(0, 8)}.html`;
+        const fullPath = path.join(MOCKUPS_DIR, filename);
+        let html = fullHtml;
+        if (!fullHtml.toLowerCase().includes('<!doctype') && !fullHtml.toLowerCase().includes('<html>')) {
+            html = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #0c0c0c; color: white; font-family: sans-serif; padding: 20px; }
+    </style>
+</head>
+<body>
+    ${fullHtml}
+</body>
+</html>`;
+        }
+        try {
+            fs.writeFileSync(fullPath, html);
+            userPreviews.push({ url: `http://localhost:3005/mockups/${filename}`, code: html });
+        } catch (e) {
+            console.error('Failed to write user bare preview:', e);
+        }
+    }
+
+    // Check for calendar commands
+    const lowerMessage = message.toLowerCase();
+    const isCalendarCommand = /calendar|event|meeting|appointment|schedule|remind/.test(lowerMessage);
+    let calendarResult = null;
+    if (isCalendarCommand) {
+        try {
+            const intent = await interpretCalendarCommand(message);
+            if (intent && intent.action) {
+                calendarResult = await executeCalendarOperation(intent);
+            }
+        } catch (err) {
+            console.error('Calendar command handling error:', err);
+        }
+    }
+
     try {
         // Call OpenClaw Gateway OpenResponses API
+        const { systemPrompt, gatewayAgentId } = getAgentConfig(agentId);
+        const requestBody = {
+            model: gatewayAgentId,
+            input: message,
+            user: `dashboard-chat-${agentId}` // separate sessions per agent
+        };
+        if (systemPrompt) {
+            requestBody.instructions = systemPrompt;
+        }
+
         const responsePromise = fetch(`${OPENCLAW_GATEWAY.baseUrl}/v1/responses`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${OPENCLAW_GATEWAY.token}`
             },
-            body: JSON.stringify({
-                model: agentId, 
-                input: message,
-                user: 'dashboard-user' 
-            })
+            body: JSON.stringify(requestBody)
         });
 
         // Timeout for gateway response (don't block forever)
-        const timeoutPromise = new Promise((_, reject) => 
+        const timeoutPromise = new Promise((_, reject) =>
             setTimeout(() => reject(new Error('Gateway timeout')), 90000) // 90 seconds
         );
 
@@ -718,18 +1274,17 @@ app.post('/api/pi/chat', async (req, res) => {
         let previewUrl = null;
         let previewCode = null;
 
-        // Detect HTML/Code blocks for inline preview
-        const codeBlockRegex = /```(?:html|xml)?\s*([\s\S]*?)```/i;
-        const match = outputText.match(codeBlockRegex);
+        // Collect AI-generated previews
+        const aiPreviews = [];
 
-        if (match) {
-            const code = match[1].trim();
-            // If it looks like HTML, save it for preview
+        // 1) Fenced code blocks: ```html ... ```
+        const fencedRegex = /```(?:html|xml)?\s*([\s\S]*?)```/gi;
+        let fencedMatch;
+        while ((fencedMatch = fencedRegex.exec(outputText)) !== null) {
+            const code = fencedMatch[1].trim();
             if (code.includes('<') && (code.includes('</') || code.includes('/>'))) {
                 const filename = `preview-${crypto.randomUUID().slice(0, 8)}.html`;
                 const fullPath = path.join(MOCKUPS_DIR, filename);
-
-                // Wrap in boilerplate if it's just a fragment
                 let html = code;
                 if (!code.toLowerCase().includes('<!doctype') && !code.toLowerCase().includes('<html>')) {
                     html = `<!DOCTYPE html>
@@ -747,24 +1302,67 @@ app.post('/api/pi/chat', async (req, res) => {
 </body>
 </html>`;
                 }
-
                 fs.writeFileSync(fullPath, html);
-                previewUrl = `http://localhost:3005/mockups/${filename}`;
-                // Also return raw HTML for inline CodePreview
-                previewCode = html;
+                aiPreviews.push({ url: `http://localhost:3005/mockups/${filename}`, code: html });
             }
         }
+
+        // 2) Bare HTML elements (e.g., <div ...>...</div>, <svg ...>...</svg>) that are not inside fenced blocks
+        // Replace fenced blocks with placeholders to avoid double-detection
+        let residualText = outputText.replace(fencedRegex, '___FENCED_BLOCK_PLACEHOLDER___');
+        const bareHtmlRegex = /<(div|svg|section|article|aside|main|nav|header|footer|table|form|ul|ol|li)(\s[^>]*)?>[\s\S]*?<\/\1>/gi;
+        let bareMatch;
+        while ((bareMatch = bareHtmlRegex.exec(residualText)) !== null) {
+            const fullHtml = bareMatch[0];
+            if (fullHtml.includes('___FENCED_BLOCK_PLACEHOLDER___')) continue; // skip placeholder
+            // Heuristic: likely a widget if it has a style attribute (reduces false positives)
+            if (!/(style|class)=/i.test(fullHtml)) continue;
+            const filename = `preview-${crypto.randomUUID().slice(0, 8)}.html`;
+            const fullPath = path.join(MOCKUPS_DIR, filename);
+            let html = fullHtml;
+            if (!fullHtml.toLowerCase().includes('<!doctype') && !fullHtml.toLowerCase().includes('<html>')) {
+                html = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #0c0c0c; color: white; font-family: sans-serif; padding: 20px; }
+    </style>
+</head>
+<body>
+    ${fullHtml}
+</body>
+</html>`;
+            }
+            fs.writeFileSync(fullPath, html);
+            aiPreviews.push({ url: `http://localhost:3005/mockups/${filename}`, code: html });
+        }
+
+        // Merge user and AI previews
+        const mergedPreviews = [...userPreviews, ...aiPreviews];
+
+        // Backward compatibility fields point to first merged preview
+        previewUrl = mergedPreviews[0]?.url || null;
+        previewCode = mergedPreviews[0]?.code || null;
 
         // Add Pi's response to history
         const piResponse = {
             id: `pi-${Date.now()}`,
             role: 'assistant',
             text: outputText,
-            reasoning: reasoning, // Store the thought process
+            reasoning: reasoning,
             time: Date.now(),
+            ...(mergedPreviews.length > 0 && { previews: mergedPreviews }),
             previewUrl,
             previewCode
         };
+        // If a calendar action was performed, prepend confirmation to the response
+        if (calendarResult && calendarResult.success) {
+            piResponse.text = `📅 *Calendar Update*\n${calendarResult.summary}\n\n${piResponse.text}`;
+            piResponse.calendarResult = calendarResult;
+        }
         history.push(piResponse);
 
         // Keep history manageable (last 50 messages)
@@ -772,16 +1370,16 @@ app.post('/api/pi/chat', async (req, res) => {
             chatHistories[agentId] = history.slice(-50);
         }
 
-        res.json({ 
-            success: true, 
+        res.json({
+            success: true,
             userMessage,
             piResponse,
-            history: history 
+            history: history
         });
 
     } catch (error) {
         console.error('Error calling OpenClaw Gateway:', error);
-        
+
         // Add error message to history
         const errorResponse = {
             id: `pi-${Date.now()}`,
@@ -792,8 +1390,8 @@ app.post('/api/pi/chat', async (req, res) => {
         };
         history.push(errorResponse);
 
-        res.status(500).json({ 
-            success: false, 
+        res.status(500).json({
+            success: false,
             error: error.message,
             piResponse: errorResponse,
             history: history
@@ -1628,40 +2226,13 @@ app.post('/api/pi/todos/:id/log', (req, res) => {
     }
 });
 
-// Get available agent IDs from OpenClaw Gateway
-const fetchOpenClawAgents = async () => {
-  try {
-    const gatewayUrl = OPENCLAW_GATEWAY.baseUrl;
-    const token = OPENCLAW_GATEWAY.token;
-    const headers = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-
-    const response = await fetch(`${gatewayUrl}/agents/list`, { headers });
-    if (!response.ok) {
-      console.error('Failed to fetch agents from gateway:', response.status);
-      return [];
-    }
-    const data = await response.json();
-    // data.agents is array of { id, name, description? }
-    return data.agents || [];
-  } catch (error) {
-    console.error('Error fetching OpenClaw agents:', error);
-    return [];
-  }
-};
-
-app.get('/api/pi/todos/agent/types', async (req, res) => {
-  const agents = await fetchOpenClawAgents();
-  if (agents.length === 0) {
-    // Fallback to hardcoded if gateway unreachable
+app.get('/api/pi/todos/agent/types', (req, res) => {
     res.json([
-      { id: 'pi', name: 'Pi (Main Agent)', description: 'The primary assistant with full tool access' },
-      { id: 'coding', name: 'Coding Specialist', description: 'Focused on software development tasks' },
-      { id: 'research', name: 'Research Agent', description: 'Web search and information synthesis' }
+        { id: 'dashboard', name: 'Dashboard Agent', description: 'Primary assistant for dashboard interactions' },
+        { id: 'pi', name: 'Pi (Main Agent)', description: 'The primary assistant with full tool access' },
+        { id: 'coding', name: 'Coding Specialist', description: 'Focused on software development tasks' },
+        { id: 'research', name: 'Research Agent', description: 'Web search and information synthesis' }
     ]);
-  } else {
-    res.json(agents);
-  }
 });
 
 // ============================================
@@ -1746,16 +2317,30 @@ app.listen(PORT, () => {
 `);
 });
 
-// Cleanup on exit
-process.on('SIGINT', () => {
-    console.log('\n\n🧹 Shutting down all services...');
+// Cleanup on exit — kill all child processes and release port 3005
+const gracefulShutdown = (signal) => {
+    console.log(`\n\n🧹 Received ${signal} — shutting down all services...`);
     for (const [id, { process: proc }] of runningProcesses) {
         console.log(`   Stopping [${id}]...`);
-        if (process.platform === 'win32') {
-            spawn('taskkill', ['/pid', proc.pid.toString(), '/f', '/t'], { shell: true });
-        } else {
-            proc.kill('SIGTERM');
+        try {
+            if (process.platform === 'win32') {
+                spawn('taskkill', ['/pid', proc.pid.toString(), '/f', '/t'], { shell: true });
+            } else {
+                proc.kill('SIGTERM');
+            }
+        } catch (e) {
+            // Process may already be dead
         }
     }
     setTimeout(() => process.exit(0), 500);
-});
+};
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+// Windows-specific: detect when parent process (concurrently) dies
+// When the parent exits, stdin closes — we use that as a shutdown signal
+if (process.platform === 'win32') {
+    process.stdin.resume();
+    process.stdin.on('end', () => gracefulShutdown('stdin-close'));
+}

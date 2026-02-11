@@ -1,11 +1,37 @@
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
 interface TitleBarProps {
     onNewApp?: () => void;
 }
 
 const TitleBar: React.FC<TitleBarProps> = () => {
+    const [isMaximized, setIsMaximized] = useState(false);
+
+    useEffect(() => {
+        // Check initial maximized state
+        const electronAPI = (window as any).electronAPI;
+        if (electronAPI?.windowIsMaximized) {
+            electronAPI.windowIsMaximized().then(setIsMaximized);
+        }
+
+        // Listen for maximize/restore events (optional enhancement)
+        // For now, we'll poll or update on button click
+    }, []);
+
+    const handleMinimize = () => {
+        const electronAPI = (window as any).electronAPI;
+        electronAPI?.windowMinimize?.();
+    };
+
+    const handleMaximize = async () => {
+        const electronAPI = (window as any).electronAPI;
+        if (electronAPI?.windowMaximize) {
+            const newState = await electronAPI.windowMaximize();
+            setIsMaximized(newState);
+        }
+    };
+
     const handleClose = () => {
         const electronAPI = (window as any).electronAPI;
         electronAPI?.windowClose?.();
@@ -32,6 +58,54 @@ const TitleBar: React.FC<TitleBarProps> = () => {
                 className="flex items-center"
                 style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
             >
+                {/* Minimize Button */}
+                <button
+                    onClick={handleMinimize}
+                    className="group relative w-12 h-9 flex items-center justify-center transition-all duration-300"
+                    title="Minimize"
+                >
+                    <div className="absolute inset-0 bg-white/0 group-hover:bg-white/10 transition-all duration-300" />
+                    <svg
+                        className="w-3.5 h-3.5 relative z-10 text-white/60 group-hover:text-white transition-colors duration-300"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                    >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M20 12H4" />
+                    </svg>
+                </button>
+
+                {/* Maximize/Restore Button */}
+                <button
+                    onClick={handleMaximize}
+                    className="group relative w-12 h-9 flex items-center justify-center transition-all duration-300"
+                    title={isMaximized ? "Restore" : "Maximize"}
+                >
+                    <div className="absolute inset-0 bg-white/0 group-hover:bg-white/10 transition-all duration-300" />
+                    {isMaximized ? (
+                        <svg
+                            className="w-3.5 h-3.5 relative z-10 text-white/60 group-hover:text-white transition-colors duration-300"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            strokeWidth={2}
+                        >
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 3v3a2 2 0 0 1-2 2H3m3 4-3 3 3 3M5 7h12M5 11h12M5 15h12M17 7h-2a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2Z" />
+                        </svg>
+                    ) : (
+                        <svg
+                            className="w-3.5 h-3.5 relative z-10 text-white/60 group-hover:text-white transition-colors duration-300"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            strokeWidth={2}
+                        >
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5-5-5m5 5v-4m0 4h-4" />
+                        </svg>
+                    )}
+                </button>
+
                 {/* Close Button - Clean & Precise */}
                 <button
                     onClick={handleClose}
