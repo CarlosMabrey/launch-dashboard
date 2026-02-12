@@ -1768,7 +1768,7 @@ app.post('/api/pi/chat', async (req, res) => {
 
         // Timeout for gateway response (don't block forever)
         const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Gateway timeout')), 90000) // 90 seconds
+            setTimeout(() => reject(new Error('Gateway timeout')), 300000) // 300 seconds (5 mins)
         );
 
         const response = await Promise.race([responsePromise, timeoutPromise]);
@@ -2480,35 +2480,48 @@ app.delete('/api/pi/genai/user-workflows/:name', (req, res) => {
 // WebUI Forge API Proxies
 // ============================================
 
+// Track last reported Forge status to avoid repetitive logs
+let lastForgeStatus = null;
+
 app.get('/api/pi/forge/status', async (req, res) => {
     try {
-        console.log(`[Forge] Checking status at ${FORGE_URL}...`);
-
         // First check if the API is actually working
         const apiResponse = await fetch(`${FORGE_URL}/sdapi/v1/options`).catch(e => {
-            console.log(`[Forge] API fetch failed: ${e.message}`);
+            console.error(`[Forge] API fetch failed: ${e.message}`);
             return { ok: false };
         });
 
         if (apiResponse && apiResponse.ok) {
-            console.log(`[Forge] API is ONLINE and ENABLED`);
-            return res.json({ online: true, apiEnabled: true });
+            const currentStatus = { online: true, apiEnabled: true };
+            if (JSON.stringify(currentStatus) !== JSON.stringify(lastForgeStatus)) {
+                console.log(`[Forge] API is ONLINE and ENABLED`);
+                lastForgeStatus = currentStatus;
+            }
+            return res.json(currentStatus);
         }
 
         // If API fails, check if the UI is at least reachable
         console.log(`[Forge] API not reachable (ok: ${apiResponse?.ok}), checking root UI...`);
         const uiResponse = await fetch(`${FORGE_URL}/`).catch(e => {
-            console.log(`[Forge] UI fetch failed: ${e.message}`);
+            console.error(`[Forge] UI fetch failed: ${e.message}`);
             return { ok: false };
         });
 
         if (uiResponse && uiResponse.ok) {
-            console.log(`[Forge] UI is ONLINE (API DISABLED)`);
-            return res.json({ online: true, apiEnabled: false });
+            const currentStatus = { online: true, apiEnabled: false };
+            if (JSON.stringify(currentStatus) !== JSON.stringify(lastForgeStatus)) {
+                console.log(`[Forge] UI is ONLINE (API DISABLED)`);
+                lastForgeStatus = currentStatus;
+            }
+            return res.json(currentStatus);
         }
 
-        console.log(`[Forge] Both API and UI are OFFLINE`);
-        res.json({ online: false, apiEnabled: false });
+        const currentStatus = { online: false, apiEnabled: false };
+        if (JSON.stringify(currentStatus) !== JSON.stringify(lastForgeStatus)) {
+            console.log(`[Forge] Both API and UI are OFFLINE`);
+            lastForgeStatus = currentStatus;
+        }
+        res.json(currentStatus);
     } catch (e) {
         console.error(`[Forge] Status check error:`, e);
         res.json({ online: false, apiEnabled: false });
@@ -2530,7 +2543,22 @@ app.get('/api/pi/forge/models', async (req, res) => {
             return res.json(data.map(m => m.title));
         }
         if (endpoint === '/sdapi/v1/vae') {
-            return res.json(data.map(v => v.model_name));
+            // Forge may return {model_name}, {title}, or {name}. Try all.
+            const mapped = data.map(v => v.model_name || v.title || v.name).filter(Boolean);
+            // If API succeeded but returned empty, use fallback
+            if (!mapped || mapped.length === 0) {
+                console.log('[Forge] VAE list empty, returning defaults');
+                return res.json(['Automatic', 'vae-ft-mse-840000-ema-pruned.safetensors', 'vae-ft-email-560000-ema-pruned.safetensors', 'kl-f8-anime2.ckpt', 'ZIT_ae.safetensors']);
+            }
+            return res.json(mapped);
+        }
+        if (endpoint === '/sdapi/v1/loras') {
+            // Forge returns array of objects with .name and .path. Use .path if present, else .name.
+            const mapped = data.map(l => l.path || l.name).filter(Boolean);
+            // Normalize Windows backslashes to forward slashes for consistency
+            const normalized = mapped.map(p => p.replace(/\\/g, '/'));
+            console.log('[Forge] LoRAs raw count:', data.length, 'mapped:', normalized.slice(0, 5));
+            return res.json(normalized);
         }
 
         res.json(data);
@@ -2569,16 +2597,23 @@ app.get('/api/pi/forge/schedulers', async (req, res) => {
 
 app.post('/api/pi/forge/txt2img', async (req, res) => {
     try {
+        console.log('[Forge] txt2img payload:', JSON.stringify(req.body, null, 2));
+        logGenAI('Forge txt2img payload', req.body);
         const response = await fetch(`${FORGE_URL}/sdapi/v1/txt2img`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(req.body)
         });
         const data = await response.json();
+        if (!response.ok) {
+            console.error('[Forge] txt2img error response:', data);
+            logGenAI('Forge txt2img error', data);
+        }
         logGenAI('Forge txt2img queued');
         res.json(data);
     } catch (e) {
         console.error('[Forge] txt2img error:', e);
+        logGenAI('Forge txt2img exception', { error: e.message });
         res.status(500).json({ error: 'Forge txt2img failed' });
     }
 });
@@ -2586,11 +2621,69 @@ app.post('/api/pi/forge/txt2img', async (req, res) => {
 app.get('/api/pi/forge/progress', async (req, res) => {
     try {
         const response = await fetch(`${FORGE_URL}/sdapi/v1/progress`);
+        if (!response.ok) throw new Error('Failed to fetch Forge progress');
         const data = await response.json();
-        res.json(data);
+        // data.state stores job count, etc.
+        res.json({
+            progress: data.progress,
+            ETA: data.eta_relative,
+            state: data.state
+        });
     } catch (e) {
-        res.status(500).json({ error: 'Failed to fetch progress' });
+        // console.error('[Forge] Progress error:', e.message); // Too noisy
+        res.status(500).json({ error: 'Failed to fetch Forge progress' });
     }
+});
+
+// Proxy for Memory Stats (if available via extension or generic)
+app.get('/api/pi/genai/memory', async (req, res) => {
+    // ComfyUI /system_stats
+    try {
+        const resp = await fetch(`${COMFYUI_URL}/system_stats`);
+        if (resp.ok) {
+            const stats = await resp.json();
+            // Format for UI: { vram_used: number, vram_total: number, loaded_models: [] }
+            // ComfyUI stats structure varies; simplified:
+            const vram = stats.devices ? stats.devices[0].vram_total - stats.devices[0].vram_free : 0;
+            const total = stats.devices ? stats.devices[0].vram_total : 0;
+            return res.json({
+                vram_used: vram, // bytes
+                vram_total: total,
+                loaded_models: [] // Comfy doesn't easily expose this list via standard API without custom nodes
+            });
+        }
+    } catch { }
+
+    // Fallback or Forge
+    try {
+        const resp = await fetch(`${FORGE_URL}/sdapi/v1/memory`);
+        if (resp.ok) {
+            const data = await resp.json();
+            return res.json({
+                vram: data.ram // Forge format might differ
+            });
+        }
+    } catch { }
+
+    res.json({ vram_used: 0, vram_total: 0, loaded_models: [] });
+});
+
+// Unload Models Endpoint
+app.post('/api/pi/genai/unload', async (req, res) => {
+    let freed = false;
+    // ComfyUI: /free
+    try {
+        await fetch(`${COMFYUI_URL}/free`, { method: 'POST' });
+        freed = true;
+    } catch { }
+
+    // Forge: /sdapi/v1/unload-checkpoint
+    try {
+        await fetch(`${FORGE_URL}/sdapi/v1/unload-checkpoint`, { method: 'POST' });
+        freed = true;
+    } catch { }
+
+    res.json({ success: freed });
 });
 
 // Snippets API
@@ -3162,6 +3255,28 @@ app.post('/api/pi/todos/:id/log', (req, res) => {
 });
 
 app.get('/api/pi/todos/agent/types', (req, res) => {
+    const openclawPath = path.join(process.env.USERPROFILE || process.env.HOME, '.openclaw', 'openclaw.json');
+
+    try {
+        if (fs.existsSync(openclawPath)) {
+            const content = fs.readFileSync(openclawPath, 'utf8');
+            const config = JSON.parse(content);
+
+            if (config.agents && Array.isArray(config.agents.list)) {
+                const agents = config.agents.list.map(a => ({
+                    id: a.id,
+                    name: a.name || a.id,
+                    description: a.description || `Model: ${a.model || 'Default'}`,
+                    model: a.model // include model info for UI
+                }));
+                return res.json(agents);
+            }
+        }
+    } catch (e) {
+        console.error('Failed to read openclaw.json for agents:', e);
+    }
+
+    // Fallback if config fails
     res.json([
         { id: 'dashboard', name: 'Dashboard Agent', description: 'Primary assistant for dashboard interactions' },
         { id: 'pi', name: 'Pi (Main Agent)', description: 'The primary assistant with full tool access' },

@@ -47,8 +47,12 @@ export async function getGenAIWorkflowFile(filePath: string): Promise<any> {
   return response.json();
 }
 
-export async function getGenAIModels(type: string): Promise<string[]> {
-  const response = await fetch(`${API_BASE}/genai/models?type=${encodeURIComponent(type)}`);
+export async function getGenAIModels(type: string, engine: 'comfy' | 'forge' = 'comfy'): Promise<string[]> {
+  const url = engine === 'forge'
+    ? `${API_BASE}/forge/models?type=${encodeURIComponent(type)}`
+    : `${API_BASE}/genai/models?type=${encodeURIComponent(type)}`;
+
+  const response = await fetch(url);
   if (!response.ok) throw new Error(`Failed to fetch ${type} models`);
   return response.json();
 }
@@ -214,8 +218,67 @@ export async function queueForgeTxt2Img(payload: any): Promise<{ images: string[
   return response.json();
 }
 
-export async function getForgeProgress(): Promise<{ progress: number; ETA: number }> {
-  const response = await fetch(`${API_BASE}/forge/progress`);
-  if (!response.ok) throw new Error('Failed to fetch Forge progress');
+export async function queueForgeImg2Img(payload: any): Promise<{ images: string[]; info: string }> {
+  const response = await fetch(`${API_BASE}/forge/img2img`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Forge img2img failed: ${err}`);
+  }
   return response.json();
+}
+
+export async function getForgeProgress(): Promise<{ progress: number; ETA: number; state?: any }> {
+  try {
+    const response = await fetch(`${API_BASE}/forge/progress`);
+    if (!response.ok) throw new Error('Failed to fetch Forge progress');
+    return response.json();
+  } catch {
+    return { progress: 0, ETA: 0 };
+  }
+}
+
+export interface MemoryStats {
+  vram_used: number;
+  vram_total: number;
+  loaded_models: string[];
+}
+
+export async function getMemoryStats(): Promise<MemoryStats> {
+  try {
+    const response = await fetch(`${API_BASE}/genai/memory`);
+    if (!response.ok) return { vram_used: 0, vram_total: 0, loaded_models: [] };
+    return await response.json();
+  } catch {
+    return { vram_used: 0, vram_total: 0, loaded_models: [] };
+  }
+}
+
+export async function unloadModels(): Promise<boolean> {
+  try {
+    const response = await fetch(`${API_BASE}/genai/unload`, { method: 'POST' });
+    const data = await response.json();
+    return data.success;
+  } catch {
+    return false;
+  }
+}
+
+export function validateWorkflowInputs(uiInputs: any[], values: Record<string, any>): string[] {
+  const errors: string[] = [];
+  for (const input of uiInputs) {
+    // Skip inputs that are not visible (hidden from UI)
+    if (input.visible === false) continue;
+    if (!input.optional && (values[input.key] === undefined || values[input.key] === null || values[input.key] === '')) {
+      errors.push(`Missing required input: ${input.label || input.key}`);
+    }
+    if (input.type === 'NUMBER' && values[input.key] !== undefined) {
+      const val = Number(values[input.key]);
+      if (isNaN(val)) errors.push(`Invalid number for ${input.label || input.key}`);
+    }
+  }
+  return errors;
 }

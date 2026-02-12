@@ -46,11 +46,22 @@ const NODE_WIDGET_MAP: Record<string, string[]> = {
     "IPAdapterApply": ["weight", "noise", "start_at", "end_at", "unfold_batch"],
     "IPAdapterModelLoader": ["ipadapter_file"],
 
-    // ─── ReActor ─────────────────────────────────────────────────────────────
-    "ReActorFaceSwap": ["enabled", "swap_model", "face_restore_model", "restore_visibility", "codeformer_weight", "detect_gender_input", "detect_gender_source", "input_faces_index", "source_faces_index", "console_log_level"],
+
 
     // ─── Ultimate SD Upscale ─────────────────────────────────────────────────
     "UltimateSDUpscale": ["upscale_by", "seed", "control_after_generate", "steps", "cfg", "sampler_name", "scheduler", "denoise", "mode", "tile_width", "tile_height", "masking", "seeding", "radius", "blur_sigma", "denoise_mask", "polishing", "polishing_strength", "polishing_factor"],
+
+    // ─── Comfyroll ───────────────────────────────────────────────────────────
+    "CR LoRA Stack": [
+        "switch_1", "lora_name_1", "model_weight_1", "clip_weight_1",
+        "switch_2", "lora_name_2", "model_weight_2", "clip_weight_2",
+        "switch_3", "lora_name_3", "model_weight_3", "clip_weight_3"
+    ],
+    "CR Apply LoRA Stack": [], // Inputs are connections usually
+
+    // ─── ReActor ─────────────────────────────────────────────────────────────
+    "ReActorFaceSwap": ["enabled", "swap_model", "facedetection", "face_restore_model", "codeformer_weight", "detect_gender_source", "detect_gender_input", "source_faces_index", "input_faces_index", "console_log_level"],
+    "ReActorFaceBoost": ["enabled", "boost_model", "interpolation", "visibility", "codeformer_weight", "restore_with_main_after"],
 };
 
 export function convertGraphToApi(graph: any): any {
@@ -123,28 +134,121 @@ export function convertGraphToApi(graph: any): any {
 /**
  * Automatically identifies and parameterizes common fields in a workflow.
  */
+/**
+ * Automatically identifies and parameterizes common fields in a workflow.
+ * Returns the modified workflow with `__ui.inputs` metadata populated.
+ */
 export function parameterizeWorkflow(apiWorkflow: any): any {
-    const parameterized = JSON.parse(JSON.stringify(apiWorkflow));
+    const workflow = JSON.parse(JSON.stringify(apiWorkflow));
+    const uiInputs: any[] = [];
+    const seenKeys = new Set<string>();
 
-    for (const nodeId in parameterized) {
-        const node = parameterized[nodeId];
-        const type = node.class_type;
+    const addInput = (key: string, type: string, label: string, defaultValue: any, visible: boolean = true) => {
+        if (!seenKeys.has(key)) {
+            uiInputs.push({ key, type, label, default: defaultValue, visible });
+            seenKeys.add(key);
+        }
+        return `{{${key}}}`; // Return the template tag
+    };
 
-        if (type === 'CLIPTextEncode') {
-            if (node.inputs.text && String(node.inputs.text).length > 3 && !String(node.inputs.text).includes('{{')) {
-                node.inputs.text = '{{PROMPT}}';
-            }
-        } else if (type === 'LoadImage') {
-            if (node.inputs.image && !String(node.inputs.image).includes('{{')) {
-                node.inputs.image = '{{IMAGE}}';
-            }
-        } else if (type === 'EmptyLatentImage') {
-            if (node.inputs.width && !String(node.inputs.width).includes('{{')) node.inputs.width = '{{WIDTH|NUMBER}}';
-            if (node.inputs.height && !String(node.inputs.height).includes('{{')) node.inputs.height = '{{HEIGHT|NUMBER}}';
-        } else if (type === 'KSampler') {
-            if (node.inputs.seed !== undefined) node.inputs.seed = '{{SEED|NUMBER}}';
+    // 1. First pass: Identify KSamplers to find connected prompts
+    const samplerNodes: any[] = [];
+    for (const id in workflow) {
+        if (workflow[id].class_type === 'KSampler' || workflow[id].class_type === 'KSamplerAdvanced') {
+            samplerNodes.push({ id, node: workflow[id] });
         }
     }
 
-    return parameterized;
+    // 2. Iterate nodes and parameterize
+    for (const nodeId in workflow) {
+        const node = workflow[nodeId];
+        const type = node.class_type;
+
+        if (type === 'KSampler' || type === 'KSamplerAdvanced') {
+            if (node.inputs.seed !== undefined) {
+                node.inputs.seed = addInput('SEED', 'NUMBER', 'Seed', typeof node.inputs.seed === 'number' ? node.inputs.seed : -1);
+            }
+            if (node.inputs.steps) {
+                node.inputs.steps = addInput('STEPS', 'NUMBER', 'Steps', node.inputs.steps);
+            }
+            if (node.inputs.cfg) {
+                node.inputs.cfg = addInput('CFG', 'NUMBER', 'CFG Scale', node.inputs.cfg);
+            }
+            if (node.inputs.sampler_name) {
+                node.inputs.sampler_name = addInput('SAMPLER', 'SAMPLER', 'Sampler', node.inputs.sampler_name);
+            }
+            if (node.inputs.scheduler) {
+                node.inputs.scheduler = addInput('SCHEDULER', 'SCHEDULER', 'Scheduler', node.inputs.scheduler);
+            }
+        }
+
+        else if (type === 'EmptyLatentImage') {
+            if (node.inputs.width) {
+                node.inputs.width = addInput('WIDTH', 'NUMBER', 'Width', node.inputs.width);
+            }
+            if (node.inputs.height) {
+                node.inputs.height = addInput('HEIGHT', 'NUMBER', 'Height', node.inputs.height);
+            }
+            if (node.inputs.batch_size) {
+                // Usually keep batch size 1, maybe hidden
+                node.inputs.batch_size = addInput('BATCH_SIZE', 'NUMBER', 'Batch Size', node.inputs.batch_size, false);
+            }
+        }
+
+        else if (type === 'CheckpointLoaderSimple' || type === 'CheckpointLoader' || type === 'UnetLoaderGGUF') {
+            const param = type === 'UnetLoaderGGUF' ? 'unet_name' : 'ckpt_name';
+            if (node.inputs[param]) {
+                node.inputs[param] = addInput('MODEL', 'MODEL', 'Checkpoint', node.inputs[param]);
+            }
+        }
+
+        else if (type === 'VAELoader') {
+            if (node.inputs.vae_name) {
+                node.inputs.vae_name = addInput('VAE', 'VAE', 'VAE', node.inputs.vae_name);
+            }
+        }
+
+        else if (type === 'CLIPTextEncode') {
+            // Heuristic: Is this Positive or Negative?
+            // Check if it connects to a KSampler's 'positive' or 'negative' input
+            let isPositive = false;
+            let isNegative = false;
+
+            // Check all samplers to see if they reference this node
+            for (const { node: sampler } of samplerNodes) {
+                const posInput = sampler.inputs.positive;
+                const negInput = sampler.inputs.negative;
+
+                // Connection format: [nodeId, slotIndex]
+                if (Array.isArray(posInput) && posInput[0] === nodeId) isPositive = true;
+                if (Array.isArray(negInput) && negInput[0] === nodeId) isNegative = true;
+            }
+
+            const currentText = node.inputs.text;
+            if (typeof currentText === 'string' && !currentText.includes('{{')) {
+                if (isPositive) {
+                    node.inputs.text = addInput('PROMPT', 'PROMPT', 'Positive Prompt', currentText);
+                } else if (isNegative) {
+                    node.inputs.text = addInput('NEGATIVE_PROMPT', 'PROMPT', 'Negative Prompt', currentText);
+                } else {
+                    // Unknown purpose, generic valid text
+                    const key = `TEXT_${nodeId}`;
+                    node.inputs.text = addInput(key, 'PROMPT', `Text (${nodeId})`, currentText);
+                }
+            }
+        }
+
+        else if (type === 'LoadImage') {
+            if (node.inputs.image) {
+                const key = `IMAGE_${nodeId}`;
+                node.inputs.image = addInput(key, 'IMAGE', `Input Image (${nodeId})`, node.inputs.image);
+            }
+        }
+    }
+
+    // Attach metadata
+    if (!workflow.__ui) workflow.__ui = {};
+    workflow.__ui.inputs = uiInputs;
+
+    return workflow;
 }

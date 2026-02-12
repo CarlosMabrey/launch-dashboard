@@ -42,6 +42,20 @@ function createWindow() {
     mainWindow.show();
   });
 
+  // Enable Ctrl+R (reload) and Ctrl+Shift+R (hard reload)
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.control && input.key.toLowerCase() === 'r' && input.type === 'keyDown') {
+      if (input.shift) {
+        console.log('Force Reloading window...');
+        mainWindow.webContents.reloadIgnoringCache();
+      } else {
+        console.log('Reloading window...');
+        mainWindow.reload();
+      }
+      event.preventDefault();
+    }
+  });
+
   // Set max listeners to prevent warning when switching many BrowserViews
   mainWindow.setMaxListeners(50);
 
@@ -294,6 +308,18 @@ ipcMain.handle('browser-view-create', async (event, { url, bounds, appId }) => {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+      }
+    });
+
+    // Enable Ctrl+R (reload) and Ctrl+Shift+R (hard reload) for this view
+    view.webContents.on('before-input-event', (event, input) => {
+      if (input.control && input.key.toLowerCase() === 'r' && input.type === 'keyDown') {
+        if (input.shift) {
+          view.webContents.reloadIgnoringCache();
+        } else {
+          view.webContents.reload();
+        }
+        event.preventDefault();
       }
     });
 

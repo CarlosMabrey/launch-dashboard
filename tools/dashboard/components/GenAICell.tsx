@@ -28,6 +28,7 @@ import {
 } from '../services/genaiService';
 import { convertGraphToApi, parameterizeWorkflow } from '../utils/comfyConverter';
 import { GenAILoraSelector, LoraConfig } from './GenAILoraSelector';
+import { useLocalStorage } from '../hooks/useLocalStorage';
 
 const API_BASE = 'http://localhost:3005/api/pi';
 
@@ -305,6 +306,18 @@ export function GenAICell() {
   const [importDragOver, setImportDragOver] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
 
+  // Persistence: selected workflow ID and per-workflow UI state
+  const [selectedWorkflowId, setSelectedWorkflowId] = useLocalStorage<string>('genai_selected_workflow_id', '');
+  const [savedWorkflowStates, setSavedWorkflowStates] = useLocalStorage<Record<string, { inputValues?: Record<string, any>; activeLoras?: LoraConfig[]; featureStates?: Record<string, boolean>; uiInputs?: UiInputConfig[]; selectedMode?: string }>>('genai_workflow_states', {});
+  // Keep a ref to the latest savedWorkflowStates to avoid unnecessary effect triggers
+  const savedWorkflowStatesRef = useRef(savedWorkflowStates);
+  useEffect(() => {
+    savedWorkflowStatesRef.current = savedWorkflowStates;
+  }, [savedWorkflowStates]);
+
+  // Track manual mode changes to prevent saved preferences from overriding user selection
+  const isManualModeChangeRef = useRef(false);
+
   // New Features
   const [memoryStats, setMemoryStats] = useState<MemoryStats | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
@@ -539,7 +552,14 @@ export function GenAICell() {
         const combined = [...systemList, ...userList];
         setConfig(cfg);
         setWorkflowsList(combined);
-        if (combined.length > 0) selectWorkflow(combined[0]);
+        if (combined.length > 0) {
+          const initialWf = selectedWorkflowId ? combined.find(w => w.id === selectedWorkflowId) : null;
+          if (initialWf) {
+            await selectWorkflow(initialWf);
+          } else {
+            await selectWorkflow(combined[0]);
+          }
+        }
       } catch (err) {
         console.error('Failed to load GenAI config:', err);
         setError('Config load failed. Is the server running?');
@@ -632,7 +652,15 @@ export function GenAICell() {
 
   // ─── Workflow Selection ────────────────────────────────────────────────────
   const selectWorkflow = async (wfDef: GenAIWorkflowDefinition) => {
+    // If a saved mode preference exists for this workflow AND this isn't a manual mode change,
+    // override the default to persist user preference across sessions
+    const saved = savedWorkflowStatesRef.current[wfDef.id]?.selectedMode;
+    if (saved && saved !== wfDef.default && !isManualModeChangeRef.current) {
+      wfDef = { ...wfDef, default: saved };
+    }
+
     setSelectedWfDef(wfDef);
+    setSelectedWorkflowId(wfDef.id);
     setError(null);
     setResultUrl(null);
     setInputValues({});
@@ -659,12 +687,13 @@ export function GenAICell() {
         return;
       }
 
+      // Fetch the workflow content from server
       const content = await getGenAIWorkflowFile(filePath);
 
       // ─── Workflow Health Patch ─────────────────────────────────────────────
       // Fix known missing required inputs in community workflows
       const patched = JSON.parse(JSON.stringify(content));
-      for (const [nodeId, node] of Object.entries(patched)) {
+      for (const [nodeId, node] of Object.entries(patched) as [string, any][]) {
         if (node?.class_type === 'ReActorFaceSwap') {
           const inputs = node.inputs || {};
           // Required: face_restore_visibility (if missing)
@@ -689,14 +718,47 @@ export function GenAICell() {
     }
 
     console.log('[GenAI] Syncing UI inputs for content...');
-    const inputs = getWorkflowUiInputs(workflowContent);
-    console.log('[GenAI] Found inputs:', inputs);
-    setUiInputs(inputs);
+    const derivedInputs = getWorkflowUiInputs(workflowContent);
+    console.log('[GenAI] Derived inputs:', derivedInputs);
+
+    // Always start with derived inputs from the file. Then merge saved overrides (visibility, label, defaults) if present.
+    const saved = savedWorkflowStatesRef.current[selectedWfDef?.id]?.uiInputs;
+    let inputsToUse: UiInputConfig[] = derivedInputs;
+
+    if (saved && saved.length > 0) {
+      if (derivedInputs.length === 0) {
+        // File has no detectable inputs; fall back to saved (might be from earlier version)
+        inputsToUse = saved;
+      } else {
+        // Merge saved modifications onto derived inputs by key
+        const savedByKey = new Map(saved.map(inp => [inp.key, inp]));
+        inputsToUse = derivedInputs.map(derivedInp => {
+          const savedInp = savedByKey.get(derivedInp.key);
+          return savedInp ? { ...derivedInp, ...savedInp } : derivedInp;
+        });
+      }
+    }
+
+    // Ensure LORA selector input exists (add if missing)
+    const hasLoraInput = inputsToUse.some(inp => inp.key === '__LORA_SELECTOR__');
+    if (!hasLoraInput) {
+      inputsToUse.push({
+        key: '__LORA_SELECTOR__',
+        type: 'LORA',
+        label: 'LoRA Enhancements',
+        visible: true,
+        default: [] // array of LoRA names
+      });
+    }
+
+    setUiInputs(inputsToUse);
 
     const initDefaults = async () => {
       const next: Record<string, any> = {};
 
-      for (const inp of inputs) {
+      for (const inp of inputsToUse) {
+        // Skip the LORA selector input
+        if (inp.key === '__LORA_SELECTOR__') continue;
         // ALWAYS use the defined default if present
         if (inp.default !== undefined) {
           next[inp.key] = inp.default;
@@ -731,7 +793,116 @@ export function GenAICell() {
     };
 
     initDefaults();
-  }, [workflowContent, fetchModels]);
+  }, [workflowContent, fetchModels, selectedWfDef]);
+
+  // ─── Persist UI State Changes ───────────────────────────────────────────────
+  // Use a ref to track if we're currently restoring to avoid feedback loops
+  const isRestoringRef = useRef(false);
+
+  useEffect(() => {
+    if (selectedWfDef && !isRestoringRef.current) {
+      setSavedWorkflowStates(prev => ({
+        ...prev,
+        [selectedWfDef.id]: {
+          ...prev[selectedWfDef.id],
+          inputValues
+        }
+      }));
+    }
+  }, [inputValues]); // Only save when inputValues changes
+
+  useEffect(() => {
+    if (selectedWfDef && !isRestoringRef.current) {
+      setSavedWorkflowStates(prev => ({
+        ...prev,
+        [selectedWfDef.id]: {
+          ...prev[selectedWfDef.id],
+          activeLoras
+        }
+      }));
+    }
+  }, [activeLoras]); // Only save when activeLoras changes
+
+  useEffect(() => {
+    if (selectedWfDef && !isRestoringRef.current) {
+      setSavedWorkflowStates(prev => ({
+        ...prev,
+        [selectedWfDef.id]: {
+          ...prev[selectedWfDef.id],
+          featureStates
+        }
+      }));
+    }
+  }, [featureStates]); // Only save when featureStates changes
+
+  // ─── Persist UI Layout Changes ──────────────────────────────────────────────
+  useEffect(() => {
+    if (selectedWfDef && !isRestoringRef.current) {
+      setSavedWorkflowStates(prev => ({
+        ...prev,
+        [selectedWfDef.id]: {
+          ...prev[selectedWfDef.id],
+          uiInputs
+        }
+      }));
+    }
+  }, [uiInputs]); // Only save when uiInputs changes
+
+  // ─── Persist Selected Mode ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (selectedWfDef && selectedWfDef.default && !isRestoringRef.current) {
+      setSavedWorkflowStates(prev => ({
+        ...prev,
+        [selectedWfDef.id]: {
+          ...prev[selectedWfDef.id],
+          selectedMode: selectedWfDef.default
+        }
+      }));
+    }
+  }, [selectedWfDef?.default, selectedWfDef]);
+
+  // ─── Restore Saved Layout State ─────────────────────────────────────────────
+  const restoredWfIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (selectedWfDef) {
+      const saved = savedWorkflowStatesRef.current[selectedWfDef.id];
+      if (saved) {
+        // Only restore if this workflow hasn't been restored already (prevents re-running on every savedWorkflowStates change)
+        if (restoredWfIdRef.current === selectedWfDef.id) return;
+        restoredWfIdRef.current = selectedWfDef.id;
+
+        // Prevent restoration from triggering persistence
+        isRestoringRef.current = true;
+        if (saved.inputValues) setInputValues(saved.inputValues);
+        if (saved.activeLoras) setActiveLoras(saved.activeLoras);
+        if (saved.featureStates) setFeatureStates(saved.featureStates);
+        // Use a microtask to reset the flag after state updates have been processed
+        Promise.resolve().then(() => {
+          isRestoringRef.current = false;
+        });
+      }
+    }
+  }, [selectedWfDef]); // Only depend on selected workflow; use ref for saved state
+
+  // ─── Initialize Default LoRAs from Layout Config ─────────────────────────────
+  // If no saved activeLoras for this workflow, and the LORA input has default names, load them.
+  useEffect(() => {
+    if (selectedWfDef && uiInputs.length > 0 && activeLoras.length === 0) {
+      const saved = savedWorkflowStatesRef.current[selectedWfDef.id];
+      if (!saved?.activeLoras || saved.activeLoras.length === 0) {
+        const loraInp = uiInputs.find(i => i.key === '__LORA_SELECTOR__');
+        if (loraInp?.default && Array.isArray(loraInp.default) && loraInp.default.length > 0) {
+          const defaultLoras: LoraConfig[] = loraInp.default.map((name: string) => ({
+            name,
+            strength_model: 1.0,
+            strength_clip: 1.0
+          }));
+          setActiveLoras(defaultLoras);
+        }
+      }
+    }
+  }, [uiInputs, selectedWfDef, activeLoras.length, modelsCache.loras]);
 
   // ─── Input Handlers ────────────────────────────────────────────────────────
   const handleInputChange = (key: string, value: any) => {
@@ -1027,7 +1198,12 @@ export function GenAICell() {
 
         const promptBase = findVal(['PROMPT', 'POSITIVE'], "");
         // Append LoRAs to prompt for Forge
-        const loraString = activeLoras.map(l => `<lora:${l.name}:${l.strength_model}>`).join(' ');
+        const loraString = activeLoras.map(l => {
+          // Forge expects LoRA names as relative paths from models/loras with forward slashes.
+          // Convert Windows backslashes to forward slashes, preserve subfolders.
+          const normalized = l.name.replace(/\\/g, '/');
+          return `<lora:${normalized}:${l.strength_model}>`;
+        }).join(' ');
         const finalPrompt = loraString ? `${promptBase} ${loraString}` : promptBase;
 
         const payload: any = {
@@ -1254,33 +1430,58 @@ export function GenAICell() {
       if (!updatedContent.__ui) updatedContent.__ui = {};
       updatedContent.__ui.inputs = uiInputs;
 
-      // We need to know if it's a system or user workflow.
-      // System workflows cannot be overwritten easily via API typically, 
-      // but for this "dashboard" tool, we might assume we can overwrite if it's local,
-      // OR we save a copy as user-workflow if it was system.
-      // For now, let's try to save using the existing name.
+      // Determine if this is a system workflow (not user-created)
+      const isSystemWorkflow = !selectedWfDef.id.startsWith('user-') &&
+                               !selectedWfDef.file?.includes('/user/');
 
-      // If it's a system workflow (no "user-" prefix in ID usually, but check file path),
-      // we might want to save as a new user workflow if we can't overwrite.
-      // But let's assume we can save for now.
+      let result;
+      if (isSystemWorkflow) {
+        // For system workflows, create a new user copy with a modified name
+        const customName = `${selectedWfDef.name} (Customized)`;
+        result = await saveUserGenAIWorkflow({
+          name: customName,
+          content: updatedContent
+        });
 
-      const name = selectedWfDef.name;
-      // If it's a built-in workflow, we should probably save a copy?
-      // For simplicity in this task, we will attempt to save.
+        if (result.success) {
+          // Preserve the current UI state under the new workflow ID before switching
+          const newWfId = `user-${result.fileName?.replace('.json', '') || customName}`;
+          setSavedWorkflowStates(prev => ({
+            ...prev,
+            [newWfId]: {
+              ...prev[selectedWfDef.id], // Transfer existing saved state if any
+              inputValues,
+              activeLoras,
+              featureStates,
+              uiInputs
+            }
+          }));
 
-      console.log('[GenAI] Saving workflow config:', updatedContent);
+          // Add the new user workflow to the list
+          const newDef: GenAIWorkflowDefinition = {
+            id: newWfId,
+            name: customName,
+            file: `workflows/user/${result.fileName || (customName + '.json')}`,
+            icon: selectedWfDef.icon || '🛠️',
+            description: 'Customized from system workflow'
+          };
+          setWorkflowsList(prev => [...prev, newDef]);
 
-      const result = await saveUserGenAIWorkflow({
-        name,
-        content: updatedContent,
-        // overwrite: true
-      });
+          // Switch to the new user workflow (will restore from saved state)
+          await selectWorkflow(newDef);
+        }
+      } else {
+        // For user workflows, save normally (overwrite)
+        const name = selectedWfDef.name;
+        result = await saveUserGenAIWorkflow({
+          name,
+          content: updatedContent
+        });
 
-      if (result.success) {
-        setWorkflowContent(updatedContent);
-        setIsEditMode(false);
-        // If it created a new file (e.g. was system), we might need to update the list,
-        // but if we overwrote or mapped correctly, it's fine.
+        if (result.success) {
+          setWorkflowContent(updatedContent);
+          setIsEditMode(false);
+        }
       }
     } catch (e: any) {
       console.error('Failed to save Layout:', e);
@@ -1340,14 +1541,35 @@ export function GenAICell() {
       if (!selectedWfDef?.file) return;
       const parsed = JSON.parse(rawJsonText);
       const isUser = selectedWfDef.id.startsWith('user-');
-      const name = selectedWfDef.name;
+      const isSystem = !isUser && !selectedWfDef.file?.includes('/user/');
 
-      const result = await saveUserGenAIWorkflow({ name, content: parsed });
-      if (result.success) {
-        setWorkflowContent(parsed);
-        setIsEditingJson(false);
-        setError(null);
-        alert('Workflow saved successfully!');
+      let result;
+      if (isSystem) {
+        // Save system workflow as a new user copy
+        const customName = `${selectedWfDef.name} (Customized)`;
+        result = await saveUserGenAIWorkflow({ name: customName, content: parsed });
+        if (result.success) {
+          // Switch to the new user workflow
+          const newDef: GenAIWorkflowDefinition = {
+            id: `user-${result.fileName?.replace('.json', '') || customName}`,
+            name: customName,
+            file: `workflows/user/${result.fileName || (customName + '.json')}`,
+            icon: selectedWfDef.icon || '🛠️',
+            description: 'Customized JSON edit from system workflow'
+          };
+          setWorkflowsList(prev => [...prev, newDef]);
+          await selectWorkflow(newDef);
+        }
+      } else {
+        // For user workflows, overwrite normally
+        const name = selectedWfDef.name;
+        result = await saveUserGenAIWorkflow({ name, content: parsed });
+        if (result.success) {
+          setWorkflowContent(parsed);
+          setIsEditingJson(false);
+          setError(null);
+          alert('Workflow saved successfully!');
+        }
       }
     } catch (e: any) {
       setError('Save failed: ' + e.message);
@@ -1356,8 +1578,12 @@ export function GenAICell() {
 
   const handleModeChange = (mode: string) => {
     if (!selectedWfDef?.modes?.[mode]) return;
+    // Mark that this is a manual mode change so saved preferences don't override it
+    isManualModeChangeRef.current = true;
     const newDef = { ...selectedWfDef, default: mode };
     selectWorkflow(newDef);
+    // Reset the flag after the change has been processed
+    setTimeout(() => { isManualModeChangeRef.current = false; }, 0);
   };
 
   // ─── Render: Workflow Tabs ─────────────────────────────────────────────────
@@ -1447,7 +1673,7 @@ export function GenAICell() {
 
     return (
       <div className="space-y-4 mt-4">
-        {uiInputs.filter(inp => inp && inp.visible !== false).map(inp => {
+        {uiInputs.filter(inp => inp && inp.visible !== false && inp.key !== '__LORA_SELECTOR__').map(inp => {
           if (!inp) return null;
           const key = inp.key;
           const type = inp.type;
@@ -1632,6 +1858,26 @@ export function GenAICell() {
                     }}
                     className="w-full bg-black/30 border border-white/10 rounded px-1.5 py-1 text-xs text-white focus:border-indigo-500/50 outline-none"
                   />
+                ) : inp.type === 'LORA' ? (
+                  <div>
+                    <select
+                      multiple
+                      size={Math.min(4, (modelsCache.loras || []).length) || 4}
+                      value={inp.default || []}
+                      onChange={(e) => {
+                        const selected = Array.from(e.target.selectedOptions, opt => opt.value);
+                        const newInputs = [...uiInputs];
+                        newInputs[idx] = { ...inp, default: selected };
+                        setUiInputs(newInputs);
+                      }}
+                      className="w-full bg-black/30 border border-white/10 rounded text-xs text-white"
+                    >
+                      {(modelsCache.loras || []).map(opt => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                    <div className="text-[9px] text-white/30 mt-1">Ctrl+click for multi</div>
+                  </div>
                 ) : (
                   <input
                     type="text"
@@ -1951,11 +2197,17 @@ export function GenAICell() {
                 {renderEditConfig()}
 
                 {/* LoRA Selector */}
-                <GenAILoraSelector
-                  availableLoras={modelsCache.loras || []}
-                  activeLoras={activeLoras}
-                  onChange={setActiveLoras}
-                />
+                {(() => {
+                  const loraInp = uiInputs.find(i => i.key === '__LORA_SELECTOR__');
+                  const show = loraInp?.visible !== false;
+                  return show ? (
+                    <GenAILoraSelector
+                      availableLoras={modelsCache.loras || []}
+                      activeLoras={activeLoras}
+                      onChange={setActiveLoras}
+                    />
+                  ) : null;
+                })()}
 
                 {/* Dynamic Inputs */}
                 {renderInputs()}

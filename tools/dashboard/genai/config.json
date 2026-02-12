@@ -56,17 +56,20 @@
             "name": "Clothes Changer",
             "description": "Change clothing on a person image.",
             "icon": "👚",
-            "file": "workflows/clothes.json"
+            "modes": {
+                "ComfyUI": "workflows/clothes.json",
+                "Forge": "workflows/forge_clothes.json"
+            },
+            "default": "ComfyUI"
         },
         "lumina_turbo": {
             "name": "Lumina Turbo",
-            "description": "High-speed T2I generation using Lumina-Next-T2I GGUF and Qwen.",
+            "description": "High-speed T2I generation using Lumina-Next-T2I GGUF and Qwen. (Forge only)",
             "icon": "⚡",
             "modes": {
-                "ComfyUI": "workflows/lumina_turbo.json",
                 "Forge": "workflows/forge_lumina_turbo.json"
             },
-            "default": "ComfyUI"
+            "default": "Forge"
         }
     }
 }

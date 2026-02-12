@@ -4,7 +4,7 @@ version: 2.5.0
 status: active
 priority: high
 health: 100
-last_updated: 2026-02-10
+last_updated: 2026-02-11
 ---
 
 # 🛸 Grand Architect Dashboard - Development Log
@@ -27,24 +27,6 @@ assigned_to: pi
 description: Create UI for summoning and managing agents within the dashboard, including navigation and quick access
 [/task]
 
-[task]
-id: 101
-title: Link Music Player to AI Heartbeat State
-priority: high
-tags: [music, heartbeat, integration]
-estimate: 2h
-status: in-progress
-created: 2026-02-09
-started: 2026-02-11T05:20:43.065Z
-progress: 0
-assigned_to: pi
-description: Connect the dashboard music player to the AI heartbeat system for synchronized ambient control
-results: [2/10/2026, 10:20:43 PM] Execution started with agent: pi
-Instructions: add lofi/ambient beats to the music player with full interactive functionality. 
-[2/10/2026, 10:20:43 PM] Agent spawn error: spawn EINVAL
-
-[/task]
-
 
 ## ⚡ Tier 1: Critical for Workflow & Project Management
 
@@ -54,10 +36,12 @@ title: Snippet Vault
 priority: high
 tags: [developer-tools, snippets, code]
 estimate: 4h
-status: todo
+status: done
 created: 2026-02-09
 assigned_to: pi
 description: Store code snippets with syntax highlighting, quick copy to clipboard, tag-based search
+completed: 2026-02-11
+notes: Implemented in code-preview app
 [/task]
 
 [task]
@@ -105,10 +89,12 @@ title: Port Scanner
 priority: medium
 tags: [devops, networking, utilities]
 estimate: 2h
-status: todo
+status: done
 created: 2026-02-09
 assigned_to: pi
 description: Monitor local ports, identify which processes are using them, quick kill switches
+completed: 2026-02-11
+notes: Port scanning integrated into grimoire scan; apps show isOnline status based on portOpen. Stop/Start service via context menu provides kill switch.
 [/task]
 
 [task]
@@ -133,6 +119,54 @@ status: todo
 created: 2026-02-09
 assigned_to: pi
 description: Save/restore grid arrangements, Focus Mode and Presentation Mode presets
+[/task]
+
+[task]
+id: 126
+title: Token Usage Dashboard (Agents Section)
+priority: medium
+tags: [agents, tokens, monitoring]
+estimate: 6h
+status: todo
+created: 2026-02-11
+assigned_to: pi
+description: Display OpenClaw token consumption and limits within the agents section. Requires backend API endpoint to expose usage metrics (if available) or polling from OpenClaw stats; frontend cell with charts/quotas and real-time updates.
+[/task]
+
+[task]
+id: 127
+title: Chat Reset Button in Pi Whisperer
+priority: low
+tags: [ui, chat, usability]
+estimate: 2h
+status: todo
+created: 2026-02-11
+assigned_to: pi
+description: Add 'Clear Chat' or 'New Chat' button to the Pi Whisperer cell that resets conversation history (equivalent to /new in OpenClaw). Implement by creating a new backend endpoint to clear Pi message session or by sending a special command to existing chat API.
+[/task]
+
+[task]
+id: 128
+title: Refactor GenAI Cell into Modular Components
+priority: medium
+tags: [refactoring, genai, architecture]
+estimate: 8h
+status: todo
+created: 2026-02-12
+assigned_to: pi
+description: Move monolithic GenAICell.tsx into smaller, focused components (LoRA selector, model pickers, feature toggles, JSON editor, etc.) while preserving all functionality including layout persistence, Forge/Comfy switching, and recent bug fixes. Ensure no new code is lost during the split. Update imports and maintain TypeScript types.
+[/task]
+
+[task]
+id: 129
+title: Fix Forge LoRA Loading for Subfolders (High Priority)
+priority: high
+tags: [genai, forge, lora, bug]
+estimate: 2h
+status: in-progress
+created: 2026-02-12
+assigned_to: pi
+description: Despite previous fix, Forge still fails to load LoRAs from subfolders with error: Failed to load LoRA: "ZIT/aestheticphotoz4.safetensors". The LoRA exists and loads manually via WebUI. Need to investigate path handling differences between API and WebUI, and ensure dashboard sends the correct reference. Possible issues: missing models/loras/ prefix, case sensitivity, or Forge expects just filename even for subfolders? Must verify by inspecting network requests from WebUI when adding LoRA and compare to our API payload.
 [/task]
 
 
@@ -358,6 +392,32 @@ status: done
 created: 2026-02-02
 completed: 2026-02-04
 assigned_to: pi
+[/task]
+
+## 🧹 Workspace Cleanup
+
+[task]
+id: 200
+title: Delete standalone test/debug scripts from dashboard root
+priority: low
+tags: [cleanup, maintenance]
+estimate: 0.5h
+status: todo
+created: 2026-02-11
+assigned_to: pi
+description: Remove all leftover test scripts from the project root that are not part of the application: add-calendar-event.js, debug_api.*, fetch-hn.*, test-*.{js,ts,mjs,cjs}, update-weather.*, temp_*.{ts,ps1}, tmp_head_App.tsx, patch-chat.mjs.bak, etc. Verify nothing is referenced before deletion.
+[/task]
+
+[task]
+id: 201
+title: Delete mockups folder and orphaned test data/logs
+priority: low
+tags: [cleanup, maintenance]
+estimate: 0.5h
+status: todo
+created: 2026-02-11
+assigned_to: pi
+description: Remove apps/code-preview/saved/mockups/ (HTML mockups), weather_*.json, probe_results.txt, build logs (tsc-*.txt, build-output.txt), and other generated test artifacts. Confirm no references exist in code.
 [/task]
 
 

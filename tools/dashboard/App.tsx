@@ -61,7 +61,10 @@ const App: React.FC = () => {
   const [isEditMode, setIsEditMode] = useState(false);
   const [startInFullscreen, setStartInFullscreen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [activeView, setActiveView] = useState<'discover' | 'genai' | 'agents' | 'logs' | 'roadmap'>('discover');
+  const [activeView, setActiveView] = useState<'discover' | 'genai' | 'agents' | 'logs' | 'roadmap'>(() => {
+    const saved = localStorage.getItem('dashboard_active_view');
+    return (saved as 'discover' | 'genai' | 'agents' | 'logs' | 'roadmap') || 'discover';
+  });
   const [chatInputValue, setChatInputValue] = useState('');
   const [selectedAgent, setSelectedAgent] = useState<string>('pi');
   const [availableAgents, setAvailableAgents] = useState<AgentType[]>([]);
@@ -79,6 +82,8 @@ const App: React.FC = () => {
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [sidebarsCollapsed, setSidebarsCollapsed] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(0);
+  const [previewImage, setPreviewImage] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
+  const [selectedAetherIndex, setSelectedAetherIndex] = useState<number>(-1);
 
   // ─── Data Fetching ─────────────────────────────────────────────────────────────
   const fetchAllNonChatData = useCallback(async () => {
@@ -212,6 +217,11 @@ const App: React.FC = () => {
   useInterval(fetchTodos, 5000);
   useInterval(fetchGenAIImages, 5000);
 
+  // ─── Persist activeView to localStorage ───────────────────────────────────────
+  useEffect(() => {
+    localStorage.setItem('dashboard_active_view', activeView);
+  }, [activeView]);
+
   // ─── Keyboard Shortcuts ────────────────────────────────────────────────────────
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -244,6 +254,72 @@ const App: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [commandPaletteOpen, apps, contextMenu, selectedApp]);
+
+  // ─── Aether Feedback Keyboard Navigation ─────────────────────────────────────
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle arrow keys when the image preview modal is open
+      if (!previewImage) {
+        return;
+      }
+
+      const target = e.target as HTMLElement;
+      const isInputFocused = ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) ||
+                             target.isContentEditable ||
+                             (target.getAttribute('role') === 'textbox');
+
+      // Don't intercept if user is typing in an input
+      if (isInputFocused) {
+        return;
+      }
+
+      const chatItems = chatHistory.map(m => ({ ...m, type: 'chat', sortTime: m.time, url: '' }));
+      const genItems = genAIHistory.map(g => ({
+        id: g.id,
+        type: 'genai' as const,
+        text: g.isVideo ? 'Generated Video' : 'Generated Image',
+        role: 'assistant' as const,
+        time: g.time,
+        sortTime: g.time,
+        url: g.url
+      }));
+
+      const combined = [...chatItems, ...genItems]
+        .sort((a, b) => b.sortTime - a.sortTime)
+        .slice(0, 8);
+
+      if (combined.length === 0) return;
+
+      let newIndex = selectedAetherIndex;
+
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        newIndex = selectedAetherIndex >= combined.length - 1 ? 0 : selectedAetherIndex + 1;
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        newIndex = selectedAetherIndex <= 0 ? combined.length - 1 : selectedAetherIndex - 1;
+      }
+
+      if (newIndex !== selectedAetherIndex) {
+        setSelectedAetherIndex(newIndex);
+        const selected = combined[newIndex];
+        if (selected && selected.type === 'genai' && selected.url) {
+          setPreviewImage({
+            url: selected.url,
+            type: selected.text.includes('Video') ? 'video' : 'image'
+          });
+        }
+      }
+
+      if (e.key === 'Escape') {
+        setSelectedAetherIndex(-1);
+        setPreviewImage(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [chatHistory, genAIHistory, selectedAetherIndex, previewImage]);
 
   // ─── App Actions ───────────────────────────────────────────────────────────────
   const handleLaunchApp = useCallback(async (app: AppItem) => {
@@ -591,10 +667,10 @@ const App: React.FC = () => {
           </div>
 
           {/* RIGHT CONTENT */}
-          <div className={`border-l border-white/20 p-8 flex flex-col transition-all duration-500 ${sidebarsCollapsed ? 'opacity-0 p-0 overflow-hidden border-l-0' : 'opacity-100'}`}>
+          <div className={`border-l border-white/20 p-8 flex flex-col h-full overflow-hidden transition-all duration-500 ${sidebarsCollapsed ? 'opacity-0 p-0 border-l-0' : 'opacity-100'}`}>
 
             {/* Recent Heartbeats (Recommended Songs Area) */}
-            <div className="flex-1 overflow-y-auto min-h-0 mb-6">
+            <div className="flex-1 overflow-hidden min-h-0 mb-6 relative">
               <h2 className="text-sm font-semibold uppercase tracking-widest text-white/50 mb-6">Aether Feedback</h2>
               <div className="space-y-4">
                 <div className="space-y-4">
@@ -614,9 +690,28 @@ const App: React.FC = () => {
                       .sort((a, b) => b.sortTime - a.sortTime)
                       .slice(0, 8);
 
-                    return combined.map((msg) => (
-                      <div key={msg.id} className="flex items-center gap-4 group">
-                        <div className={`w-10 h-10 rounded-lg border flex items-center justify-center text-sm shrink-0 overflow-hidden ${msg.type === 'genai' ? 'bg-purple-500/10 border-purple-500/20' : 'bg-white/5 border-white/10'}`}>
+                    return combined.map((msg, idx) => (
+                      <div
+                        key={msg.id}
+                        className={`flex items-center gap-4 group cursor-pointer transition-all ${
+                          selectedAetherIndex === idx ? 'bg-white/5 rounded-lg border border-indigo-500/30' : ''
+                        }`}
+                        onClick={() => {
+                          if (msg.type === 'genai' && msg.url) {
+                            setSelectedAetherIndex(idx);
+                            setPreviewImage({ url: msg.url, type: msg.text.includes('Video') ? 'video' : 'image' });
+                          }
+                        }}
+                      >
+                        <div
+                          className={`w-10 h-10 rounded-lg border flex items-center justify-center text-sm shrink-0 overflow-hidden transition-colors ${
+                            msg.type === 'genai'
+                              ? selectedAetherIndex === idx
+                                ? 'bg-indigo-500/20 border-indigo-500'
+                                : 'bg-purple-500/10 border-purple-500/20 hover:border-purple-400/50'
+                              : 'bg-white/5 border-white/10'
+                          }`}
+                        >
                           {msg.type === 'genai' ? (
                             msg.url ? <img src={msg.url} className="w-full h-full object-cover" alt="GenAI" /> : '🎨'
                           ) : (
@@ -824,6 +919,55 @@ const App: React.FC = () => {
         onClearChat={handleClearChat}
         onAgentChange={setSelectedAgent}
       />
+
+      {/* Fullscreen Media Preview Modal */}
+      {previewImage && (
+        <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-2xl flex flex-col animate-in fade-in duration-300">
+          {/* Toolbar */}
+          <div className="absolute top-4 right-4 z-50 flex items-center gap-4">
+            <a
+              href={previewImage.url}
+              download
+              target="_blank"
+              rel="noreferrer"
+              className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-full text-sm font-medium transition-colors flex items-center gap-2 backdrop-blur-md"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <i className="fa fa-download"></i> Download
+            </a>
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="p-3 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors backdrop-blur-md"
+            >
+              <i className="fa fa-times text-xl"></i>
+            </button>
+          </div>
+
+          {/* Content */}
+          <div
+            className="flex-1 flex items-center justify-center p-8 overflow-hidden cursor-zoom-out"
+            onClick={() => setPreviewImage(null)}
+          >
+            {previewImage.type === 'video' ? (
+              <video
+                src={previewImage.url}
+                controls
+                autoPlay
+                loop
+                className="max-w-full max-h-full rounded-lg shadow-2xl object-contain cursor-default"
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <img
+                src={previewImage.url}
+                alt="Full Preview"
+                className="max-w-full max-h-full rounded-lg shadow-2xl object-contain cursor-default transition-transform duration-200 hover:scale-[1.02]"
+                onClick={(e) => e.stopPropagation()}
+              />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

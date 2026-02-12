@@ -38,12 +38,6 @@
                 "default": 1
             },
             {
-                "key": "SHIFT",
-                "label": "Shift",
-                "type": "NUMBER",
-                "default": 6
-            },
-            {
                 "key": "SEED",
                 "label": "Seed",
                 "type": "NUMBER",
