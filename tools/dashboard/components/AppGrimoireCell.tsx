@@ -22,11 +22,17 @@ function AppCard({ app, onLaunch, onContext }: AppCardProps) {
   const progress = app.todoData?.progressPercent || 0;
   const isImage = app.icon?.startsWith('data:image');
 
+  // Icon effect: vibrant when online (saturate + emerald glow)
+  const iconGlowStyle = app.isOnline ? {
+    filter: 'saturate(1.4) drop-shadow(0 0 16px rgba(16, 185, 129, 0.55))',
+    textShadow: '0 0 12px rgba(16, 185, 129, 0.5)'
+  } : {};
+
   return (
     <div
       onClick={onLaunch}
       onContextMenu={onContext}
-      className={`carousel-item premium-card p-0 flex flex-col items-center justify-center group shadow-2xl relative`}
+      className={`carousel-item premium-card p-0 flex flex-col items-center justify-center group shadow-2xl relative ${app.isOnline ? 'online' : ''}`}
     >
       <div className="magical-glow" />
 
@@ -34,9 +40,9 @@ function AppCard({ app, onLaunch, onContext }: AppCardProps) {
       <div className="w-full h-full flex items-center justify-center p-8 relative z-10">
         <div className="relative w-full h-full flex items-center justify-center transition-transform duration-700 group-hover:scale-110">
           {isImage ? (
-            <img src={app.icon} className="artifact-img w-full h-full object-contain" alt={app.name} />
+            <img src={app.icon} className="artifact-img w-full h-full object-contain" style={iconGlowStyle} alt={app.name} />
           ) : (
-            <span className="artifact-img text-7xl select-none">{app.icon}</span>
+            <span className="artifact-img text-7xl select-none" style={iconGlowStyle}>{app.icon}</span>
           )}
         </div>
       </div>

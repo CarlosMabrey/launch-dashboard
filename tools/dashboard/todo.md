@@ -205,6 +205,18 @@ description: Discover and install community-created dashboard cells/widgets
 ## 📋 Backlog
 
 [task]
+id: 130
+title: Launch "The Whispering Wizard" YouTube Channel
+priority: high
+tags: [youtube, content, business, ai]
+estimate: 20h
+status: todo
+created: 2026-02-10
+assigned_to: pi
+description: Create AI-focused YouTube channel with tutorials, tool reviews, and business automation content. Initial tasks: channel branding, content planning (first 10 videos), setup equipment/software, publish pilot episode.
+[/task]
+
+[task]
 id: 121
 title: Implement Antigravity Bridge (Terminal Cell & Quick-Spells)
 priority: low

@@ -1,0 +1,239 @@
+{
+  "1": {
+    "inputs": {
+      "ckpt_name": "{{CHECKPOINT|CHECKPOINT}}"
+    },
+    "class_type": "CheckpointLoaderSimple"
+  },
+  "2": {
+    "inputs": {
+      "stop_at_clip_layer": -2,
+      "clip": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "CLIPSetLastLayer"
+  },
+  "3": {
+    "inputs": {
+      "clip": [
+        "21",
+        1
+      ],
+      "text": "{{PROMPT}}"
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "4": {
+    "inputs": {
+      "clip": [
+        "21",
+        1
+      ],
+      "text": "{{PROMPT}}"
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "5": {
+    "inputs": {
+      "model": [
+        "21",
+        0
+      ],
+      "positive": [
+        "3",
+        0
+      ],
+      "negative": [
+        "4",
+        0
+      ],
+      "latent_image": [
+        "6",
+        0
+      ],
+      "seed": "{{SEED|NUMBER}}",
+      "control_after_generate": "fixed",
+      "steps": 30,
+      "cfg": 4,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1
+    },
+    "class_type": "KSampler"
+  },
+  "6": {
+    "inputs": {
+      "width": "{{WIDTH|NUMBER}}",
+      "height": "{{HEIGHT|NUMBER}}",
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage"
+  },
+  "7": {
+    "inputs": {
+      "samples": [
+        "14",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "VAEDecode"
+  },
+  "8": {
+    "inputs": {
+      "images": [
+        "7",
+        0
+      ],
+      "filename_prefix": "Illustrious/1"
+    },
+    "class_type": "SaveImage"
+  },
+  "9": {
+    "inputs": {
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 64,
+      "temporal_overlap": 8,
+      "samples": [
+        "5",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "VAEDecodeTiled"
+  },
+  "10": {
+    "inputs": {
+      "model_name": "remacri_original.pt"
+    },
+    "class_type": "UpscaleModelLoader"
+  },
+  "11": {
+    "inputs": {
+      "upscale_model": [
+        "10",
+        0
+      ],
+      "image": [
+        "9",
+        0
+      ]
+    },
+    "class_type": "ImageUpscaleWithModel"
+  },
+  "12": {
+    "inputs": {
+      "upscale_method": "nearest-exact",
+      "width": 2304,
+      "height": 1280,
+      "crop": "disabled",
+      "image": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "ImageScale"
+  },
+  "13": {
+    "inputs": {
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 64,
+      "temporal_overlap": 8,
+      "pixels": [
+        "12",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "VAEEncodeTiled"
+  },
+  "14": {
+    "inputs": {
+      "model": [
+        "15",
+        0
+      ],
+      "positive": [
+        "3",
+        0
+      ],
+      "negative": [
+        "4",
+        0
+      ],
+      "latent_image": [
+        "13",
+        0
+      ],
+      "seed": "{{SEED|NUMBER}}",
+      "control_after_generate": "randomize",
+      "steps": 10,
+      "cfg": 4,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 0.4
+    },
+    "class_type": "KSampler"
+  },
+  "15": {
+    "inputs": {
+      "lora_name": "{{STYLE_LORA|LORA}}",
+      "strength_model": 0.8,
+      "strength_clip": 0.8,
+      "model": [
+        "1",
+        0
+      ],
+      "clip": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "LoraLoader"
+  },
+  "17": {
+    "inputs": {
+      "lora_name": "{{DETAILER_LORA_1|LORA}}",
+      "strength_model": 1,
+      "strength_clip": 1
+    },
+    "class_type": "LoraLoader"
+  },
+  "18": {
+    "inputs": {
+      "lora_name": "{{DETAILER_LORA_1|LORA}}",
+      "strength_model": 1,
+      "strength_clip": 1
+    },
+    "class_type": "LoraLoader"
+  },
+  "21": {
+    "inputs": {
+      "lora_name": "{{DETAILER_LORA_2|LORA}}",
+      "strength_model": 0.5,
+      "strength_clip": 0.5,
+      "model": [
+        "15",
+        0
+      ],
+      "clip": [
+        "15",
+        1
+      ]
+    },
+    "class_type": "LoraLoader"
+  }
+}

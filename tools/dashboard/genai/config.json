@@ -1,0 +1,72 @@
+{
+    "workflows": {
+        "upscale": {
+            "name": "Image Upscaler",
+            "description": "High-fidelity 4x upscaling using SwinIR or Real-ESRGAN.",
+            "icon": "🚀",
+            "modes": {
+                "Standard": "workflows/upscale_standard.json",
+                "SeedVR2": "workflows/upscale_seedvr2.json"
+            },
+            "default": "Standard"
+        },
+        "realistic": {
+            "name": "Realistic Vision",
+            "description": "Generate photorealistic portraits and landscapes with pre-tuned Stable Diffusion settings.",
+            "icon": "✨",
+            "file": "workflows/realistic_vision.json"
+        },
+        "faceswap": {
+            "name": "Face Swap",
+            "description": "Swap faces between images using ReActorFaceSwap.",
+            "icon": "👥",
+            "file": "workflows/faceswap_react.json",
+            "features": [
+                {
+                    "id": "face_boost",
+                    "label": "Face Boost (High Quality)",
+                    "default": true,
+                    "type": "parameter",
+                    "target": "FACE_BOOST_ENABLED"
+                },
+                {
+                    "id": "upscale",
+                    "label": "Post-Process Upscale",
+                    "default": true,
+                    "type": "bypass",
+                    "nodes": [
+                        "6",
+                        "7"
+                    ],
+                    "fallback": {
+                        "target_node": "8",
+                        "target_input": "images",
+                        "source_node": "5"
+                    }
+                }
+            ]
+        },
+        "img2vid": {
+            "name": "Image to Video",
+            "description": "Convert a static image into a video using Wan AI.",
+            "icon": "🎬",
+            "file": "workflows/wan_img2vid_api.json"
+        },
+        "clothes": {
+            "name": "Clothes Changer",
+            "description": "Change clothing on a person image.",
+            "icon": "👚",
+            "file": "workflows/clothes.json"
+        },
+        "lumina_turbo": {
+            "name": "Lumina Turbo",
+            "description": "High-speed T2I generation using Lumina-Next-T2I GGUF and Qwen.",
+            "icon": "⚡",
+            "modes": {
+                "ComfyUI": "workflows/lumina_turbo.json",
+                "Forge": "workflows/forge_lumina_turbo.json"
+            },
+            "default": "ComfyUI"
+        }
+    }
+}

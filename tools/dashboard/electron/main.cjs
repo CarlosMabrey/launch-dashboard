@@ -331,11 +331,11 @@ ipcMain.handle('browser-view-create', async (event, { url, bounds, appId }) => {
         if (totalAttempts < maxAttempts) {
           const delay = Math.min(attempt * 1000, 5000); // Backoff up to 5s
 
-          // If localhost fails, try 127.0.0.1 as a fallback after 3 attempts
+          // Always prefer IPv4 (127.0.0.1) over localhost to avoid IPv6 resolution issues
           let nextUrl = targetUrl;
-          if (totalAttempts === 3 && targetUrl.includes('localhost')) {
+          if (targetUrl.includes('localhost')) {
             nextUrl = targetUrl.replace('localhost', '127.0.0.1');
-            console.log(`[BrowserView] Localhost failed 3 times, switching to fallback: ${nextUrl}`);
+            console.log(`[BrowserView] Switching from localhost to 127.0.0.1 for IPv4 compatibility`);
           }
 
           setTimeout(() => tryLoad(nextUrl, attempt + 1), delay);

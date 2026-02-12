@@ -43,3 +43,30 @@ To build a production bundle of the dashboard:
 npm run build
 ```
 The `/dist` folder will contain the minified glassmorphic dashboard.
+
+## 🗺️ Roadmap Feature
+
+The **Roadmap** page provides a unified, visual execution order for all tasks across the main dashboard and your project folders.
+
+### How it works
+- **Aggregation**: The dashboard scans `D:\Pi\tools\dashboard\todo.md` (main) and all `D:\Pi\projects\*\todo.md` files.
+- **Parsing**: Tasks are parsed using the same logic as the Todo Board, extracting title, status, priority, assignee, estimates, and dependencies.
+- **Real-time updates**: When any todo.md file changes, the server notifies connected clients via Server-Sent Events (SSE). If SSE is unavailable, the client falls back to polling every 30 seconds.
+
+### Views
+1. **List** – Sortable table with columns: Priority, Title, Project, Status (click to cycle), Estimate, Dependencies.
+2. **Kanban** – Drag-and-drop columns (Backlog, In Progress, Blocked, Done) to update status.
+3. **Project Map** – Dependency graph for selected project, displaying nodes and arrows between dependent tasks.
+
+### Keyboard shortcuts
+- `→` / `←` – Change task status (List view: row click also cycles)
+- `E` – Open file in VS Code (requires `path` configured)
+- `A` – Assign to self (Pi)
+- `D` – Add dependency (future)
+
+### Refreshing
+- Click the refresh button in the header to manually reload.
+- Auto-refresh is enabled via SSE; you should see updates within seconds of editing any todo.md file.
+
+### Access
+Open the sidebar and click **Roadmap** (🗺️) under the Agents section (or navigate to `/roadmap`).

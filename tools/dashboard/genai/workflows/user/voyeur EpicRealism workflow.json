@@ -1,0 +1,247 @@
+{
+  "1": {
+    "inputs": {
+      "ckpt_name": "realDream_sdxlPony19.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple"
+  },
+  "2": {
+    "inputs": {
+      "stop_at_clip_layer": -2,
+      "clip": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "CLIPSetLastLayer"
+  },
+  "3": {
+    "inputs": {
+      "text": "{{PROMPT}}",
+      "clip": [
+        "11",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "4": {
+    "inputs": {
+      "text": "{{PROMPT}}",
+      "clip": [
+        "11",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "5": {
+    "inputs": {
+      "seed": "{{SEED|NUMBER}}",
+      "control_after_generate": "increment",
+      "steps": 20,
+      "cfg": 5.5,
+      "sampler_name": "dpmpp_2m_sde_gpu",
+      "scheduler": "karras",
+      "denoise": 1,
+      "model": [
+        "11",
+        0
+      ],
+      "positive": [
+        "3",
+        0
+      ],
+      "negative": [
+        "4",
+        0
+      ],
+      "latent_image": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "KSampler"
+  },
+  "6": {
+    "inputs": {
+      "width": "{{WIDTH|NUMBER}}",
+      "height": "{{HEIGHT|NUMBER}}",
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage"
+  },
+  "7": {
+    "inputs": {
+      "samples": [
+        "5",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "VAEDecode"
+  },
+  "9": {
+    "inputs": {
+      "widget_0": "On",
+      "widget_1": "SDXL\\Hardcore_TED_Expressions-000001.safetensors",
+      "widget_2": 2.0000000000000004,
+      "widget_3": 2.0000000000000004,
+      "widget_4": "On",
+      "widget_5": "SDXL\\Point_and_shoot_v0.1.safetensors",
+      "widget_6": 1.2000000000000002,
+      "widget_7": 1.2000000000000002,
+      "widget_8": "On",
+      "widget_9": "SDXL\\Real_Beauty.safetensors",
+      "widget_10": 1.5000000000000002,
+      "widget_11": 1.5000000000000002,
+      "lora_stack": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "CR LoRA Stack"
+  },
+  "11": {
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "clip": [
+        "1",
+        1
+      ],
+      "lora_stack": [
+        "21",
+        0
+      ]
+    },
+    "class_type": "CR Apply LoRA Stack"
+  },
+  "12": {
+    "inputs": {
+      "images": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "PreviewImage"
+  },
+  "13": {
+    "inputs": {
+      "widget_0": "On",
+      "widget_1": "SDXL\\RealSkin_xxXL_v1.safetensors",
+      "widget_2": 1,
+      "widget_3": 1,
+      "widget_4": "On",
+      "widget_5": "SDXL\\ILXL_Realism_Slider_V.1.safetensors",
+      "widget_6": 0.5000000000000001,
+      "widget_7": 0.5000000000000001,
+      "widget_8": "On",
+      "widget_9": "SDXL\\body_weight_slider_v1.safetensors",
+      "widget_10": 0.25000000000000006,
+      "widget_11": 0.25000000000000006
+    },
+    "class_type": "CR LoRA Stack"
+  },
+  "14": {
+    "inputs": {
+      "enabled": true,
+      "swap_model": "inswapper_128.onnx",
+      "face_restore_model": "retinaface_resnet50",
+      "restore_visibility": "codeformer-v0.1.0.pth",
+      "codeformer_weight": 1,
+      "detect_gender_input": 0.5,
+      "detect_gender_source": "no",
+      "input_faces_index": "no",
+      "source_faces_index": "0",
+      "console_log_level": "0",
+      "widget_10": 1,
+      "input_image": [
+        "7",
+        0
+      ],
+      "source_image": [
+        "15",
+        0
+      ],
+      "face_boost": [
+        "17",
+        0
+      ]
+    },
+    "class_type": "ReActorFaceSwap"
+  },
+  "15": {
+    "inputs": {
+      "image": "{{IMAGE}}",
+      "upload": "image"
+    },
+    "class_type": "LoadImage"
+  },
+  "17": {
+    "inputs": {
+      "widget_0": true,
+      "widget_1": "GFPGANv1.4.pth",
+      "widget_2": "Bicubic",
+      "widget_3": 1,
+      "widget_4": 0.5,
+      "widget_5": false
+    },
+    "class_type": "ReActorFaceBoost"
+  },
+  "18": {
+    "inputs": {
+      "images": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "PreviewImage"
+  },
+  "19": {
+    "inputs": {
+      "filename_prefix": "EpicRealism",
+      "images": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "SaveImage"
+  },
+  "21": {
+    "inputs": {
+      "widget_0": "On",
+      "widget_1": "SDXL\\Facial_XL.safetensors",
+      "widget_2": 1,
+      "widget_3": 1,
+      "widget_4": "On",
+      "widget_5": "SDXL\\titglassv2_SDXL.safetensors",
+      "widget_6": 0.67,
+      "widget_7": 0.67,
+      "widget_8": "On",
+      "widget_9": "SDXL\\leaked_nudes_style_v1_fixed.safetensors",
+      "widget_10": 0.6,
+      "widget_11": 0.6,
+      "lora_stack": [
+        "9",
+        0
+      ]
+    },
+    "class_type": "CR LoRA Stack"
+  },
+  "22": {
+    "inputs": {
+      "filename_prefix": "FaceSwap/EpicRealism",
+      "images": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "SaveImage"
+  }
+}

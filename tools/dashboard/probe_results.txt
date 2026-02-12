@@ -1,0 +1,17 @@
+Probing /sdapi/v1/sd-models...
+  Status: 200
+  Found: 12 items
+  Sample: animij_v8.safetensors [613c8ec356]
+Deep probing /config...
+  Relevant keys: 
+Deep probing /sdapi/v1/options...
+  Relevant keys: temp_dir,clean_temp_dir_at_start,outdir_samples,outdir_txt2img_samples,outdir_img2img_samples,outdir_extras_samples,outdir_videos,outdir_grids,outdir_txt2img_grids,outdir_img2img_grids
+    temp_dir: "tmp"
+    clean_temp_dir_at_start: true
+    outdir_samples: ""
+    outdir_txt2img_samples: "output\\txt2img-images"
+    outdir_img2img_samples: "output\\img2img-images"
+Probing /sdapi/v1/cmd-flags...
+  Status: 200
+  Found: Object
+  Sample (obj): loglevel,gpu_device_id,disable_gpu_warning

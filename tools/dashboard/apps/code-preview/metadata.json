@@ -1,0 +1,14 @@
+{
+  "id": "app-1770839503858",
+  "name": "code-preview",
+  "icon": "📦",
+  "badge": "8000",
+  "colorClass": "bg-white/5",
+  "url": "#",
+  "command": "python .\\server.py",
+  "isEmbedded": true,
+  "appType": "terminal",
+  "embeddedUrl": "http://localhost:8000",
+  "port": "8000",
+  "directory": "D:\\Pi\\tools\\dashboard\\apps\\code-preview"
+}

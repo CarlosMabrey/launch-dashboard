@@ -1,0 +1,101 @@
+{
+  "1": {
+    "inputs": {
+      "widget_0": "z_image_turbo-Q5_K_M.gguf"
+    },
+    "class_type": "UnetLoaderGGUF"
+  },
+  "3": {
+    "inputs": {
+      "clip": [
+        "19",
+        0
+      ],
+      "text": "{{PROMPT}}"
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "4": {
+    "inputs": {
+      "width": "{{WIDTH|NUMBER}}",
+      "height": "{{HEIGHT|NUMBER}}",
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage"
+  },
+  "6": {
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "positive": [
+        "3",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "4",
+        0
+      ],
+      "seed": "{{SEED|NUMBER}}",
+      "control_after_generate": "fixed",
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "res_multistep",
+      "scheduler": "sgm_uniform",
+      "denoise": 1
+    },
+    "class_type": "KSampler"
+  },
+  "7": {
+    "inputs": {
+      "clip": [
+        "19",
+        0
+      ],
+      "text": ""
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "8": {
+    "inputs": {
+      "widget_0": "ZIT_ae.safetensors"
+    },
+    "class_type": "VAELoader"
+  },
+  "9": {
+    "inputs": {
+      "samples": [
+        "6",
+        0
+      ],
+      "vae": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "VAEDecode"
+  },
+  "10": {
+    "inputs": {
+      "images": [
+        "9",
+        0
+      ],
+      "filename_prefix": "LuminaTurbo"
+    },
+    "class_type": "SaveImage"
+  },
+  "19": {
+    "inputs": {
+      "widget_0": "Qwen3-4B-Q5_K_M.gguf",
+      "widget_1": "stable_diffusion",
+      "widget_2": "default"
+    },
+    "class_type": "ClipLoaderGGUF"
+  }
+}

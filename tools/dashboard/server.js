@@ -3,10 +3,13 @@ import cors from 'cors';
 import { spawn, execFile } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import http from 'http';
 import { google } from 'googleapis';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
+import chokidar from 'chokidar';
+import net from 'net';
 
 dotenv.config({ path: '.env.local' });
 
@@ -57,6 +60,365 @@ if (!fs.existsSync(VOICE_AUDIO_DIR)) {
     fs.mkdirSync(VOICE_AUDIO_DIR, { recursive: true });
 }
 app.use('/apps/voice-assistant/audios', express.static(VOICE_AUDIO_DIR));
+
+// ============================================
+// GenAI (ComfyUI) Integration
+// ============================================
+const GENAI_DIR = path.join(PI_ROOT, 'tools', 'dashboard', 'genai');
+const GENAI_WORKFLOWS_DIR = path.join(GENAI_DIR, 'workflows');
+const GENAI_UPLOADS_DIR = path.join(GENAI_DIR, 'uploads');
+const GENAI_OUTPUTS_DIR = path.join(GENAI_DIR, 'outputs');
+
+// Ensure genai directories exist
+[GENAI_DIR, GENAI_WORKFLOWS_DIR, GENAI_UPLOADS_DIR, GENAI_OUTPUTS_DIR].forEach(dir => {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+});
+
+const COMFYUI_URL = process.env.COMFYUI_URL || 'http://127.0.0.1:8188';
+const FORGE_URL = process.env.FORGE_URL || 'http://127.0.0.1:7860';
+// Optional: local path for scanning model files directly
+const COMFYUI_PATH = process.env.COMFYUI_PATH || 'D:\\ComfyUI'; // Adjust as needed
+
+// Load GenAI workflow config
+let genaiConfig = null;
+function loadGenAIConfig() {
+    try {
+        const configPath = path.join(GENAI_DIR, 'config.json');
+        if (fs.existsSync(configPath)) {
+            genaiConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        } else {
+            console.warn('[GenAI] config.json not found at', configPath);
+            genaiConfig = { workflows: {} };
+        }
+    } catch (e) {
+        console.error('[GenAI] Failed to load config:', e);
+        genaiConfig = { workflows: {} };
+    }
+}
+loadGenAIConfig();
+
+// Helper for debug logging to file
+function logGenAI(message, data = null) {
+    const logPath = path.join(GENAI_DIR, 'genai_debug.log');
+    const timestamp = new Date().toISOString();
+    let logLine = `[${timestamp}] ${message}\n`;
+    if (data) logLine += `DATA: ${JSON.stringify(data, null, 2)}\n`;
+    fs.appendFileSync(logPath, logLine);
+}
+
+// ============================================
+// GenAI API Endpoints (ComfyUI Proxy)
+// ============================================
+
+// Helper: sanitize workflow for ComfyUI (strip __ui metadata, keep only valid nodes)
+function sanitizeWorkflowForComfy(workflow) {
+    const sanitized = {};
+    for (const [nodeId, node] of Object.entries(workflow || {})) {
+        if (!node || typeof node !== 'object') continue;
+        if (nodeId.startsWith('__')) continue; // Skip __ui and other metadata keys
+        if (!node.class_type) continue;
+        sanitized[nodeId] = node;
+    }
+    return sanitized;
+}
+
+// Helper: map model type query to ComfyUI object_info folder names
+function getComfyModelFolder(type) {
+    const map = {
+        'MODEL': 'checkpoints',
+        'checkpoints': 'checkpoints',
+        'VAE': 'vae',
+        'vae': 'vae',
+        'LORA': 'loras',
+        'loras': 'loras',
+        'CLIP': 'clip',
+        'clip': 'clip',
+        'UNET': 'unet',
+        'unets': 'unet',
+        'TEXT_ENCODER': 'text_encoders',
+        'text_encoders': 'text_encoders',
+        'CONTROLNET': 'controlnet',
+        'controlnet': 'controlnet',
+        'upscale_models': 'upscale_models',
+        'embeddings': 'embeddings'
+    };
+    return map[type] || type;
+}
+
+// GET /api/pi/genai/config — serve the genai config
+app.get('/api/pi/genai/config', (req, res) => {
+    loadGenAIConfig(); // Reload fresh each time
+    res.json(genaiConfig || { workflows: {} });
+});
+
+// GET /api/pi/genai/status — check if ComfyUI is reachable
+app.get('/api/pi/genai/status', async (req, res) => {
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3000);
+        const resp = await fetch(`${COMFYUI_URL}/system_stats`, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (resp.ok) {
+            const data = await resp.json();
+            return res.json({ connected: true, stats: data });
+        }
+        res.json({ connected: false });
+    } catch (e) {
+        res.json({ connected: false, error: e.message });
+    }
+});
+
+// GET /api/pi/genai/workflow — serve a specific workflow JSON file
+app.get('/api/pi/genai/workflow', (req, res) => {
+    const filePath = req.query.file;
+    if (!filePath) return res.status(400).json({ error: 'file parameter required' });
+
+    // Security: prevent path traversal
+    const resolved = path.resolve(GENAI_DIR, filePath);
+    if (!resolved.startsWith(path.resolve(GENAI_DIR))) {
+        return res.status(403).json({ error: 'Access denied' });
+    }
+
+    try {
+        if (!fs.existsSync(resolved)) {
+            return res.status(404).json({ error: 'Workflow file not found' });
+        }
+        const content = JSON.parse(fs.readFileSync(resolved, 'utf8'));
+        res.json(content);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/pi/genai/models — list available models by type from ComfyUI
+app.get('/api/pi/genai/models', async (req, res) => {
+    const type = req.query.type || 'checkpoints';
+
+    // Samplers and schedulers are static lists
+    const staticLists = {
+        'SAMPLER': ['euler', 'euler_ancestral', 'heun', 'dpm_2', 'dpm_2_ancestral', 'lms', 'dpmpp_2s_ancestral', 'dpmpp_sde', 'dpmpp_2m', 'dpmpp_2m_sde', 'dpmpp_3m_sde', 'ddim', 'uni_pc', 'uni_pc_bh2'],
+        'SCHEDULER': ['normal', 'karras', 'exponential', 'sgm_uniform', 'simple', 'ddim_uniform'],
+        'samplers': ['euler', 'euler_ancestral', 'heun', 'dpm_2', 'dpm_2_ancestral', 'lms', 'dpmpp_2s_ancestral', 'dpmpp_sde', 'dpmpp_2m', 'dpmpp_2m_sde', 'dpmpp_3m_sde', 'ddim', 'uni_pc', 'uni_pc_bh2'],
+        'schedulers': ['normal', 'karras', 'exponential', 'sgm_uniform', 'simple', 'ddim_uniform']
+    };
+    if (staticLists[type]) return res.json(staticLists[type]);
+
+    // For model types, try scanning ComfyUI's model folders via its API
+    const folder = getComfyModelFolder(type);
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const resp = await fetch(`${COMFYUI_URL}/models/${folder}`, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (resp.ok) {
+            const models = await resp.json();
+            return res.json(Array.isArray(models) ? models : []);
+        }
+    } catch (e) {
+        console.warn(`[GenAI] Failed to fetch models from ComfyUI for ${folder}:`, e.message);
+    }
+
+    // Fallback: scan local filesystem if ComfyUI API is down
+    try {
+        const modelDir = path.join(COMFYUI_PATH, 'models', folder);
+        if (fs.existsSync(modelDir)) {
+            const files = fs.readdirSync(modelDir, { recursive: true })
+                .filter(f => typeof f === 'string' && !f.startsWith('.'))
+                .filter(f => /\.(safetensors|ckpt|pt|pth|bin|onnx)$/i.test(f));
+            return res.json(files);
+        }
+    } catch (e) {
+        console.warn(`[GenAI] Filesystem model scan failed for ${folder}:`, e.message);
+    }
+
+    res.json([]);
+});
+
+// POST /api/pi/genai/upload — upload an image to ComfyUI
+app.post('/api/pi/genai/upload', async (req, res) => {
+    try {
+        const { filename, base64 } = req.body;
+        if (!filename || !base64) return res.status(400).json({ error: 'filename and base64 required' });
+
+        // Convert base64 data URL to buffer
+        const base64Data = base64.includes(',') ? base64.split(',')[1] : base64;
+        const buffer = Buffer.from(base64Data, 'base64');
+
+        // Determine MIME type
+        const ext = path.extname(filename).toLowerCase();
+        const mimeMap = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' };
+        const mime = mimeMap[ext] || 'image/png';
+
+        // Build multipart form data manually
+        const boundary = '----ComfyUpload' + crypto.randomBytes(8).toString('hex');
+        const header = `--${boundary}\r\nContent-Disposition: form-data; name="image"; filename="${filename}"\r\nContent-Type: ${mime}\r\n\r\n`;
+        const footer = `\r\n--${boundary}--\r\n`;
+
+        const bodyBuffer = Buffer.concat([
+            Buffer.from(header),
+            buffer,
+            Buffer.from(footer)
+        ]);
+
+        const resp = await fetch(`${COMFYUI_URL}/upload/image`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': `multipart/form-data; boundary=${boundary}`,
+                'Content-Length': bodyBuffer.length.toString()
+            },
+            body: bodyBuffer
+        });
+
+        if (!resp.ok) {
+            const errText = await resp.text();
+            return res.status(resp.status).json({ error: errText });
+        }
+
+        const result = await resp.json();
+        res.json(result);
+    } catch (e) {
+        console.error('[GenAI] Upload error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// POST /api/pi/genai/queue — queue a workflow prompt to ComfyUI
+app.post('/api/pi/genai/queue', async (req, res) => {
+    try {
+        const { workflow, clientId } = req.body;
+        if (!workflow) return res.status(400).json({ error: 'workflow required' });
+
+        // Sanitize: strip __ui and non-node keys
+        const sanitized = sanitizeWorkflowForComfy(workflow);
+
+        const body = {
+            prompt: sanitized,
+            client_id: clientId || 'dashboard-' + crypto.randomBytes(4).toString('hex')
+        };
+
+        const resp = await fetch(`${COMFYUI_URL}/prompt`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+
+        if (!resp.ok) {
+            const errText = await resp.text();
+            console.error('[GenAI] Queue failed:', errText);
+            return res.status(resp.status).send(errText);
+        }
+
+        const result = await resp.json();
+        res.json(result);
+    } catch (e) {
+        console.error('[GenAI] Queue error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/pi/genai/history — proxy ComfyUI history
+app.get('/api/pi/genai/history', async (req, res) => {
+    try {
+        const resp = await fetch(`${COMFYUI_URL}/history`);
+        if (!resp.ok) return res.status(resp.status).json({ error: 'ComfyUI history unavailable' });
+        const data = await resp.json();
+        res.json(data);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/pi/genai/view — proxy ComfyUI output image/video viewing
+app.get('/api/pi/genai/view', async (req, res) => {
+    try {
+        const { filename, type, subfolder } = req.query;
+        if (!filename) return res.status(400).json({ error: 'filename required' });
+
+        const params = new URLSearchParams({ filename });
+        if (type) params.set('type', type);
+        if (subfolder) params.set('subfolder', subfolder);
+
+        const resp = await fetch(`${COMFYUI_URL}/view?${params.toString()}`);
+        if (!resp.ok) return res.status(resp.status).send('Image not found');
+
+        // Forward content-type and pipe the image data
+        const contentType = resp.headers.get('content-type') || 'image/png';
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+
+        const arrayBuffer = await resp.arrayBuffer();
+        res.send(Buffer.from(arrayBuffer));
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/pi/genai/user-workflows — list user-imported workflows
+app.get('/api/pi/genai/user-workflows', (req, res) => {
+    const userDir = path.join(GENAI_WORKFLOWS_DIR, 'user');
+    if (!fs.existsSync(userDir)) {
+        fs.mkdirSync(userDir, { recursive: true });
+        return res.json([]);
+    }
+
+    try {
+        const files = fs.readdirSync(userDir).filter(f => f.endsWith('.json'));
+        const workflows = files.map(f => {
+            try {
+                const content = JSON.parse(fs.readFileSync(path.join(userDir, f), 'utf8'));
+                return { fileName: f, content };
+            } catch (e) {
+                return null;
+            }
+        }).filter(Boolean);
+        res.json(workflows);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// POST /api/pi/genai/user-workflows — save a user workflow
+app.post('/api/pi/genai/user-workflows', (req, res) => {
+    try {
+        const { name, content } = req.body;
+        if (!name || !content) return res.status(400).json({ success: false, error: 'name and content required' });
+
+        const userDir = path.join(GENAI_WORKFLOWS_DIR, 'user');
+        if (!fs.existsSync(userDir)) fs.mkdirSync(userDir, { recursive: true });
+
+        const safeName = name.replace(/[^a-zA-Z0-9_\-\s]/g, '').trim();
+        const fileName = safeName + '.json';
+        fs.writeFileSync(path.join(userDir, fileName), JSON.stringify(content, null, 2));
+
+        res.json({ success: true, fileName });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// DELETE /api/pi/genai/user-workflows/:name — delete a user workflow
+app.delete('/api/pi/genai/user-workflows/:name', (req, res) => {
+    try {
+        const fileName = decodeURIComponent(req.params.name);
+        const filePath = path.join(GENAI_WORKFLOWS_DIR, 'user', fileName);
+
+        // Security: prevent path traversal
+        if (!path.resolve(filePath).startsWith(path.resolve(GENAI_WORKFLOWS_DIR))) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            res.json({ success: true });
+        } else {
+            res.status(404).json({ success: false, error: 'File not found' });
+        }
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+console.log('[GenAI] API endpoints registered.');
 
 // OpenClaw Gateway Config
 // Token resolution order:
@@ -199,12 +561,113 @@ let githubActivity = {
     dailyHistory: {} // YYYY-MM-DD: count
 };
 
-// Snippets Storage
-const SNIPPETS_FILE = path.join(process.cwd(), 'snippets.json');
+// Snippets Storage - using graphite_snippets.json in code-preview/saved
+const SNIPPETS_FILE = path.join(PI_ROOT, 'tools', 'dashboard', 'apps', 'code-preview', 'saved', 'graphite_snippets.json');
 
-// ============================================
+// ─────────────────────────────────────────────────────────────────────────────
+// Port Scanner Utility
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Check if a specific port on localhost is open/listening.
+ * Uses a short timeout for quick scanning.
+ */
+function isPortOpen(port) {
+    return new Promise((resolve) => {
+        if (!port) {
+            resolve(false);
+            return;
+        }
+        const portNum = parseInt(port, 10);
+        if (isNaN(portNum) || portNum <= 0 || portNum > 65535) {
+            resolve(false);
+            return;
+        }
+
+        const socket = new net.Socket();
+        let timedOut = false;
+
+        const timeout = setTimeout(() => {
+            timedOut = true;
+            socket.destroy();
+            resolve(false);
+        }, 200); // 200ms timeout per port
+
+        socket.on('connect', () => {
+            if (!timedOut) {
+                clearTimeout(timeout);
+                socket.destroy();
+                resolve(true);
+            }
+        });
+
+        socket.on('error', () => {
+            if (!timedOut) {
+                clearTimeout(timeout);
+                socket.destroy();
+                resolve(false);
+            }
+        });
+
+        socket.connect(portNum, '127.0.0.1');
+    });
+}
+
+/**
+ * Scan multiple ports in parallel (with concurrency limit to avoid overwhelming)
+ */
+async function scanPorts(ports, concurrency = 50) {
+    const results = new Map();
+    const chunks = [];
+    for (let i = 0; i < ports.length; i += concurrency) {
+        chunks.push(ports.slice(i, i + concurrency));
+    }
+    for (const chunk of chunks) {
+        const promises = chunk.map(async (port) => {
+            const open = await isPortOpen(port);
+            return { port, open };
+        });
+        const chunkResults = await Promise.all(promises);
+        for (const { port, open } of chunkResults) {
+            results.set(port, open);
+        }
+    }
+    return results;
+}
+
+// Cache port scan results for 5 seconds to avoid excessive scanning
+let portScanCache = { timestamp: 0, results: new Map() };
+const PORT_SCAN_TTL = 5000; // ms
+
+async function getPortStatus(ports) {
+    const now = Date.now();
+    const effectivePorts = [...new Set(ports.filter(p => p))]; // dedup
+    const cacheablePorts = effectivePorts.filter(p => p);
+
+    // If we have cached results that cover all requested ports and are fresh, use them
+    if (now - portScanCache.timestamp < PORT_SCAN_TTL && cacheablePorts.every(p => portScanCache.results.has(p))) {
+        const results = new Map();
+        for (const p of effectivePorts) {
+            results.set(p, portScanCache.results.has(p) ? portScanCache.results.get(p) : false);
+        }
+        return results;
+    }
+
+    // Perform fresh scan
+    const scanResults = await scanPorts(cacheablePorts);
+    portScanCache = { timestamp: now, results: scanResults };
+
+    // Build result map for all requested ports (including empty ones)
+    const finalResults = new Map();
+    for (const p of effectivePorts) {
+        finalResults.set(p, scanResults.get(p) || false);
+    }
+    return finalResults;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // App Grimoire (D:\\Pi Scanner + Registry)
-// ============================================
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Persistent registry for manually-added apps and config overrides.
 // This file is the source of truth for user-created apps and
@@ -340,7 +803,7 @@ const scanDirectory = (dir, depth = 0, currentDepth = 0) => {
     return appsList;
 };
 
-const scanGrimoire = () => {
+const scanGrimoire = async () => {
     // Explicitly scan known app repositories (NOT skills — those aren't apps)
     const toolsApps = scanDirectory(path.join(PI_ROOT, 'tools'), 3);
     const projectsApps = scanDirectory(path.join(PI_ROOT, 'projects'), 3);
@@ -390,14 +853,47 @@ const scanGrimoire = () => {
         }
     }
 
-    return Array.from(finalMap.values());
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Port Sensing: Detect if any app's declared port is open (independent of dashboard)
+    // ─────────────────────────────────────────────────────────────────────────────
+    const appsArray = Array.from(finalMap.values());
+    const portsToScan = appsArray
+        .map(app => {
+            // Extract numeric port from various formats: "3000", "http://localhost:3000", etc.
+            if (!app.port) return null;
+            const match = String(app.port).match(/(\d+)/);
+            return match ? parseInt(match[1], 10) : null;
+        })
+        .filter(p => p !== null);
+
+    let portStatusMap = new Map();
+    if (portsToScan.length > 0) {
+        portStatusMap = await getPortStatus(portsToScan);
+    }
+
+    // Attach portOpen to each app based on the scan
+    for (const app of appsArray) {
+        let portNum = null;
+        if (app.port) {
+            const match = String(app.port).match(/(\d+)/);
+            portNum = match ? parseInt(match[1], 10) : null;
+        }
+        app.portOpen = portNum ? (portStatusMap.get(portNum) || false) : false;
+    }
+
+    return appsArray;
 };
 
 
 
-app.get('/api/pi/grimoire', (req, res) => {
-    const appsList = scanGrimoire();
-    res.json(appsList);
+app.get('/api/pi/grimoire', async (req, res) => {
+    try {
+        const appsList = await scanGrimoire();
+        res.json(appsList);
+    } catch (error) {
+        console.error('Error scanning grimoire:', error);
+        res.status(500).json({ error: 'Failed to scan grimoire' });
+    }
 });
 
 
@@ -525,6 +1021,22 @@ const saveSnippetsData = (snippets) => {
         console.error('Error saving snippets:', e);
     }
 };
+
+// Snippet Library API endpoints (used by code-preview app)
+app.get('/api/snippets', (req, res) => {
+    const snippets = loadSnippets();
+    res.json(snippets);
+});
+
+app.post('/api/snippets', (req, res) => {
+    const newSnippets = req.body;
+    if (!Array.isArray(newSnippets)) {
+        return res.status(400).json({ success: false, error: 'Expected an array of snippets' });
+    }
+    saveSnippetsData(newSnippets);
+    res.json({ success: true, count: newSnippets.length });
+});
+
 
 // Start a service
 app.post('/api/start', (req, res) => {
@@ -1340,6 +1852,38 @@ app.post('/api/pi/chat', async (req, res) => {
             aiPreviews.push({ url: `http://localhost:3005/mockups/${filename}`, code: html });
         }
 
+        // Auto-save AI-generated snippets to code-preview library
+        if (aiPreviews.length > 0) {
+            try {
+                const existingSnippets = loadSnippets();
+                const newSnippets = [];
+                for (const preview of aiPreviews) {
+                    const html = preview.code;
+                    // Skip if this exact HTML already exists in the library
+                    if (!existingSnippets.some(s => s.html === html)) {
+                        // Create a snippet name from AI response text (first ~30 chars)
+                        const cleanText = outputText.replace(/\n/g, ' ').trim();
+                        const name = (cleanText.substring(0, 30) + (cleanText.length > 30 ? '...' : '')) || 'AI Generation';
+                        const snippet = {
+                            id: Date.now().toString() + Math.random().toString(36).substring(2, 8),
+                            name: `${name} [${new Date().toLocaleTimeString()}]`,
+                            html: html,
+                            css: '',
+                            js: '',
+                            timestamp: new Date().toLocaleString()
+                        };
+                        newSnippets.push(snippet);
+                    }
+                }
+                if (newSnippets.length > 0) {
+                    saveSnippetsData([...existingSnippets, ...newSnippets]);
+                    console.log(`✅ Auto-saved ${newSnippets.length} AI snippet(s) to graphite_snippets.json`);
+                }
+            } catch (err) {
+                console.error('Failed to auto-save snippets:', err);
+            }
+        }
+
         // Merge user and AI previews
         const mergedPreviews = [...userPreviews, ...aiPreviews];
 
@@ -1656,6 +2200,397 @@ app.post('/api/pi/github-activity/log', (req, res) => {
     githubActivity.dailyHistory[today] = (githubActivity.dailyHistory[today] || 0) + 1;
 
     res.json({ success: true, data: githubActivity });
+});
+
+// ============================================
+// GenAI API (ComfyUI Integration)
+// ============================================
+
+// Get GenAI workflow config (list of available workflows)
+app.get('/api/pi/genai/config', (req, res) => {
+    res.json(genaiConfig || { workflows: {} });
+});
+
+// Get a specific workflow JSON content (built-in or user)
+app.get('/api/pi/genai/workflow', (req, res) => {
+    const { file } = req.query;
+    if (!file || typeof file !== 'string') {
+        return res.status(400).json({ error: 'Query param "file" is required' });
+    }
+
+    // Only allow .json files and prevent directory traversal
+    const normalized = path.normalize(file);
+    if (normalized.includes('..') || path.isAbsolute(normalized)) {
+        return res.status(400).json({ error: 'Invalid file path' });
+    }
+
+    // Check both main workflows dir and user subfolder
+    const possiblePaths = [
+        path.join(GENAI_WORKFLOWS_DIR, file),
+        path.join(GENAI_WORKFLOWS_DIR, 'user', file)
+    ];
+
+    for (const filePath of possiblePaths) {
+        if (fs.existsSync(filePath)) {
+            try {
+                const content = fs.readFileSync(filePath, 'utf8');
+                res.json(JSON.parse(content));
+                return;
+            } catch (e) {
+                console.error(`Error reading workflow ${filePath}:`, e);
+                return res.status(500).json({ error: 'Failed to read workflow' });
+            }
+        }
+    }
+
+    res.status(404).json({ error: 'Workflow not found' });
+});
+
+// List available models of a given type (checkpoints, upscale, vaes, loras, etc.)
+// Scans local ComfyUI models directory (requires COMFYUI_PATH)
+app.get('/api/pi/genai/models', (req, res) => {
+    const { type } = req.query;
+    if (!type || typeof type !== 'string') {
+        return res.status(400).json({ error: 'Query param "type" is required' });
+    }
+
+    // Map type to directory under COMFYUI_PATH/models/
+    const typeMap = {
+        'checkpoints': 'checkpoints',
+        'MODEL': 'checkpoints',
+        'upscale': 'upscale_models',
+        'VAE': 'vae',
+        'vae': 'vae',
+        'LORA': 'loras',
+        'loras': 'loras',
+        'CLIP': 'clip',
+        'UNET': 'unet',
+        'TEXT_ENCODER': 'text_encoders',
+        'CONTROLNET': 'controlnet',
+        'EMBEDDINGS': 'embeddings'
+    };
+    const subdir = typeMap[type] || type;
+    const modelsDir = path.join(COMFYUI_PATH, 'models', subdir);
+
+    if (!fs.existsSync(modelsDir)) {
+        // Return empty list if directory doesn't exist
+        return res.json([]);
+    }
+
+    try {
+        const files = fs.readdirSync(modelsDir)
+            .filter(f => f.endsWith('.safetensors') || f.endsWith('.ckpt') || f.endsWith('.pth') || f.endsWith('.pt'))
+            .map(f => path.basename(f, path.extname(f)) + path.extname(f)); // keep extension
+        res.json(files);
+    } catch (e) {
+        console.error(`Error listing models for ${type}:`, e);
+        res.json([]);
+    }
+});
+
+// Upload image to ComfyUI and get server filename
+app.post('/api/pi/genai/upload', async (req, res) => {
+    try {
+        // Expect JSON: { filename: string, base64: string (data URL or raw base64) }
+        const { filename, base64 } = req.body;
+        if (!filename || !base64) {
+            return res.status(400).json({ error: 'filename and base64 are required' });
+        }
+
+        // Extract base64 data from data URL if present
+        let base64Data = base64;
+        if (base64.startsWith('data:')) {
+            const matches = base64.match(/^data:([^;]+);base64,(.+)$/);
+            if (matches) {
+                base64Data = matches[2];
+            }
+        }
+
+        const buffer = Buffer.from(base64Data, 'base64');
+
+        // Build multipart/form-data for ComfyUI
+        const boundary = '----FormBoundary' + crypto.randomBytes(16).toString('hex');
+        const body = Buffer.from(
+            `--${boundary}\r\n` +
+            `Content-Disposition: form-data; name="image"; filename="${filename}"\r\n` +
+            `Content-Type: image/png\r\n\r\n`
+        ).concat(buffer).concat(Buffer.from(`\r\n--${boundary}--\r\n`));
+
+        const comfyResponse = await fetch(`${COMFYUI_URL}/upload/image`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': `multipart/form-data; boundary=${boundary}`
+            },
+            body
+        });
+
+        if (!comfyResponse.ok) {
+            const errText = await comfyResponse.text();
+            throw new Error(`ComfyUI upload failed: ${comfyResponse.status} ${errText}`);
+        }
+
+        const result = await comfyResponse.json(); // expects { name: string }
+        res.json(result);
+    } catch (e) {
+        console.error('[GenAI] Upload error:', e);
+        res.status(500).json({ error: e instanceof Error ? e.message : 'Upload failed' });
+    }
+});
+
+// Queue a workflow for execution
+app.post('/api/pi/genai/queue', async (req, res) => {
+    try {
+        const { workflow, clientId } = req.body;
+        if (!workflow) {
+            return res.status(400).json({ error: 'workflow is required' });
+        }
+
+        const response = await fetch(`${COMFYUI_URL}/prompt`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                prompt: workflow,
+                client_id: clientId || undefined
+            })
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Queue failed: ${response.status} ${errText}`);
+        }
+
+        const result = await response.json(); // { prompt_id: string }
+        logGenAI(`Workflow queued: ${result.prompt_id}`, { workflow });
+        res.json(result);
+    } catch (e) {
+        const errorMsg = e instanceof Error ? e.message : 'Queue failed';
+        logGenAI(`Queue error: ${errorMsg}`, { workflow });
+        console.error('[GenAI] Queue error:', e);
+        res.status(500).json({ error: errorMsg });
+    }
+});
+
+// Proxy view for generated images (see ComfyUI /view?filename=...)
+app.get('/api/pi/genai/view', async (req, res) => {
+    const { filename, subfolder, type } = req.query;
+    if (!filename) {
+        return res.status(400).json({ error: 'filename is required' });
+    }
+
+    try {
+        logGenAI(`View request: ${filename}`, { subfolder, type });
+        // 1. Try serving from local GENAI_OUTPUTS_DIR first (in case user saved there)
+        const localPath = path.join(GENAI_OUTPUTS_DIR, subfolder || '', String(filename));
+        if (fs.existsSync(localPath)) {
+            const ext = path.extname(localPath).toLowerCase();
+            const contentType = ext === '.mp4' ? 'video/mp4' : ext === '.gif' ? 'image/gif' : 'image/png';
+            res.set('Content-Type', contentType);
+            return fs.createReadStream(localPath).pipe(res);
+        }
+
+        // 2. Fallback: proxy to ComfyUI
+        const params = new URLSearchParams({ filename: String(filename) });
+        if (subfolder) params.set('subfolder', String(subfolder));
+        if (type) params.set('type', String(type));
+
+        const response = await fetch(`${COMFYUI_URL}/view?${params.toString()}`);
+        if (!response.ok) {
+            return res.status(response.status).send('Image not found');
+        }
+        // Pipe the image directly
+        res.set('Content-Type', response.headers.get('content-type') || 'image/png');
+        response.body?.pipe(res);
+    } catch (e) {
+        console.error('[GenAI] View error for', filename, ':', e);
+        res.status(500).send('Error fetching image');
+    }
+});
+
+// Get execution history (returns info about prompt executions)
+app.get('/api/pi/genai/history', async (req, res) => {
+    try {
+        // Optional: fetch from ComfyUI /history?prompt_id=... or just get all? ComfyUI has /history endpoint that returns all
+        const response = await fetch(`${COMFYUI_URL}/history`);
+        if (!response.ok) {
+            throw new Error(`History fetch failed: ${response.status}`);
+        }
+        const data = await response.json();
+        const count = Object.keys(data).length;
+        logGenAI(`History fetched: ${count} prompts`);
+        res.json(data);
+    } catch (e) {
+        logGenAI(`History error: ${e.message}`);
+        console.error('[GenAI] History error:', e);
+        res.json({});
+    }
+});
+
+// User Workflows CRUD
+app.get('/api/pi/genai/user-workflows', (req, res) => {
+    const userDir = path.join(GENAI_WORKFLOWS_DIR, 'user');
+    if (!fs.existsSync(userDir)) {
+        return res.json([]);
+    }
+    try {
+        const files = fs.readdirSync(userDir).filter(f => f.endsWith('.json'));
+        const workflows = files.map(file => {
+            const content = JSON.parse(fs.readFileSync(path.join(userDir, file), 'utf8'));
+            return { fileName: file, content };
+        });
+        res.json(workflows);
+    } catch (e) {
+        console.error('[GenAI] Error listing user workflows:', e);
+        res.json([]);
+    }
+});
+
+app.post('/api/pi/genai/user-workflows', (req, res) => {
+    const { name, content } = req.body;
+    if (!name || !content) {
+        return res.status(400).json({ success: false, error: 'name and content required' });
+    }
+    const fileName = name.endsWith('.json') ? name : `${name}.json`;
+    const filePath = path.join(GENAI_WORKFLOWS_DIR, 'user', fileName);
+    try {
+        fs.writeFileSync(filePath, JSON.stringify(content, null, 2));
+        res.json({ success: true, fileName });
+    } catch (e) {
+        console.error('[GenAI] Error saving user workflow:', e);
+        res.status(500).json({ success: false, error: e instanceof Error ? e.message : 'Save failed' });
+    }
+});
+
+app.delete('/api/pi/genai/user-workflows/:name', (req, res) => {
+    const { name } = req.params;
+    const filePath = path.join(GENAI_WORKFLOWS_DIR, 'user', name);
+    try {
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            res.json({ success: true });
+        } else {
+            res.status(404).json({ success: false, error: 'Workflow not found' });
+        }
+    } catch (e) {
+        console.error('[GenAI] Error deleting user workflow:', e);
+        res.status(500).json({ success: false, error: e instanceof Error ? e.message : 'Delete failed' });
+    }
+});
+
+// ============================================
+// WebUI Forge API Proxies
+// ============================================
+
+app.get('/api/pi/forge/status', async (req, res) => {
+    try {
+        console.log(`[Forge] Checking status at ${FORGE_URL}...`);
+
+        // First check if the API is actually working
+        const apiResponse = await fetch(`${FORGE_URL}/sdapi/v1/options`).catch(e => {
+            console.log(`[Forge] API fetch failed: ${e.message}`);
+            return { ok: false };
+        });
+
+        if (apiResponse && apiResponse.ok) {
+            console.log(`[Forge] API is ONLINE and ENABLED`);
+            return res.json({ online: true, apiEnabled: true });
+        }
+
+        // If API fails, check if the UI is at least reachable
+        console.log(`[Forge] API not reachable (ok: ${apiResponse?.ok}), checking root UI...`);
+        const uiResponse = await fetch(`${FORGE_URL}/`).catch(e => {
+            console.log(`[Forge] UI fetch failed: ${e.message}`);
+            return { ok: false };
+        });
+
+        if (uiResponse && uiResponse.ok) {
+            console.log(`[Forge] UI is ONLINE (API DISABLED)`);
+            return res.json({ online: true, apiEnabled: false });
+        }
+
+        console.log(`[Forge] Both API and UI are OFFLINE`);
+        res.json({ online: false, apiEnabled: false });
+    } catch (e) {
+        console.error(`[Forge] Status check error:`, e);
+        res.json({ online: false, apiEnabled: false });
+    }
+});
+
+app.get('/api/pi/forge/models', async (req, res) => {
+    try {
+        const { type } = req.query;
+        let endpoint = '/sdapi/v1/sd-models';
+        if (type === 'VAE') endpoint = '/sdapi/v1/vae';
+        else if (type === 'LORA') endpoint = '/sdapi/v1/loras';
+
+        const response = await fetch(`${FORGE_URL}${endpoint}`);
+        const data = await response.json();
+
+        // Normalize output to string[] for checkpoints
+        if (endpoint === '/sdapi/v1/sd-models') {
+            return res.json(data.map(m => m.title));
+        }
+        if (endpoint === '/sdapi/v1/vae') {
+            return res.json(data.map(v => v.model_name));
+        }
+
+        res.json(data);
+    } catch (e) {
+        // Fallback for missing endpoints (common in some Forge versions)
+        const { type } = req.query;
+        if (type === 'VAE') {
+            // Return common VAEs if API fails
+            console.log('[Forge] VAE API failed, returning defaults');
+            return res.json(['Automatic', 'vae-ft-mse-840000-ema-pruned.safetensors', 'vae-ft-email-560000-ema-pruned.safetensors', 'kl-f8-anime2.ckpt', 'ZIT_ae.safetensors']);
+        }
+        console.error(`Failed to fetch Forge models (${type}):`, e.message);
+        res.status(500).json({ error: 'Failed to fetch Forge models' });
+    }
+});
+
+app.get('/api/pi/forge/samplers', async (req, res) => {
+    try {
+        const response = await fetch(`${FORGE_URL}/sdapi/v1/samplers`);
+        const data = await response.json();
+        res.json(data.map(s => s.name));
+    } catch (e) {
+        res.status(500).json({ error: 'Failed to fetch Forge samplers' });
+    }
+});
+
+app.get('/api/pi/forge/schedulers', async (req, res) => {
+    try {
+        const response = await fetch(`${FORGE_URL}/sdapi/v1/schedulers`);
+        const data = await response.json();
+        res.json(data.map(s => s.name));
+    } catch (e) {
+        res.status(500).json({ error: 'Failed to fetch Forge schedulers' });
+    }
+});
+
+app.post('/api/pi/forge/txt2img', async (req, res) => {
+    try {
+        const response = await fetch(`${FORGE_URL}/sdapi/v1/txt2img`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req.body)
+        });
+        const data = await response.json();
+        logGenAI('Forge txt2img queued');
+        res.json(data);
+    } catch (e) {
+        console.error('[Forge] txt2img error:', e);
+        res.status(500).json({ error: 'Forge txt2img failed' });
+    }
+});
+
+app.get('/api/pi/forge/progress', async (req, res) => {
+    try {
+        const response = await fetch(`${FORGE_URL}/sdapi/v1/progress`);
+        const data = await response.json();
+        res.json(data);
+    } catch (e) {
+        res.status(500).json({ error: 'Failed to fetch progress' });
+    }
 });
 
 // Snippets API
@@ -2299,12 +3234,281 @@ app.get('/api/pi/projects', (req, res) => {
     }
 });
 
+// ============================================
+// Roadmap Aggregation API
+// ============================================
+
+// Helper: Convert dashboard task to RoadmapItem format
+function dashboardTaskToRoadmapItem(task, projectName, path) {
+    const priorityMap = { critical: 1, high: 2, medium: 3, low: 4 };
+    const priority = priorityMap[task.priority] || 3;
+    let estimateHours;
+    if (task.estimate) {
+        const m = task.estimate.match(/^(\d+)([hmd])$/i);
+        if (m) {
+            const v = parseInt(m[1], 10);
+            const u = m[2].toLowerCase();
+            if (u === 'm') estimateHours = v / 60;
+            else if (u === 'h') estimateHours = v;
+            else if (u === 'd') estimateHours = v * 24;
+        }
+    }
+    return {
+        id: `main-todo-${task.id}`,
+        title: task.title,
+        description: task.description || task.results || '',
+        status: task.status,
+        priority,
+        project: projectName,
+        category: task.section || undefined,
+        estimateHours,
+        assignee: task.assigned_to || task.agent || '',
+        dependencies: task.dependencies || [],
+        dueDate: undefined,
+        source: 'main-todo',
+        sourceId: task.id,
+        path
+    };
+}
+
+// Helper: Convert project task to RoadmapItem format
+function projectTaskToRoadmapItem(task, projectName, path) {
+    const priorityMap = { critical: 1, high: 2, medium: 3, low: 4 };
+    const priority = priorityMap[task.priority] || 3;
+    return {
+        id: `project-${projectName}-${task.id}`,
+        title: task.title,
+        description: '',
+        status: task.status,
+        priority,
+        project: projectName,
+        category: task.section || undefined,
+        estimateHours: undefined,
+        assignee: task.agent || '',
+        dependencies: [],
+        dueDate: undefined,
+        source: 'project',
+        sourceId: task.id,
+        path
+    };
+}
+
+// SSE clients for roadmap updates
+const roadmapSSEClients = new Set();
+
+// SSE endpoint for roadmap updates
+app.get('/api/roadmap/events', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    // Send initial comment
+    res.write(': connected\n\n');
+
+    // Keepalive every 30s
+    const keepalive = setInterval(() => res.write(':\n'), 30000);
+
+    roadmapSSEClients.add(res);
+    req.on('close', () => {
+        clearInterval(keepalive);
+        roadmapSSEClients.delete(res);
+    });
+});
+
+// Get aggregated roadmap items
+app.get('/api/roadmap/items', async (req, res) => {
+    try {
+        const items = [];
+
+        // 1) Main dashboard todo
+        const dashboardData = loadTodoBoard();
+        const mainProjectName = 'Dashboard';
+        dashboardData.sections.forEach(section => {
+            section.tasks.forEach(task => {
+                items.push(dashboardTaskToRoadmapItem(task, mainProjectName, TODO_DASHBOARD_FILE));
+            });
+        });
+
+        // 2) Projects
+        const projectsDir = path.join(PI_ROOT, 'projects');
+        if (fs.existsSync(projectsDir)) {
+            const folders = fs.readdirSync(projectsDir).filter(f => {
+                const p = path.join(projectsDir, f);
+                return fs.statSync(p).isDirectory() && !f.startsWith('.');
+            });
+            for (const folder of folders) {
+                const projectPath = path.join(projectsDir, folder);
+                const todoPath = path.join(projectPath, 'todo.md');
+                if (fs.existsSync(todoPath)) {
+                    try {
+                        const todoData = parseTodoFile(todoPath);
+                        if (todoData) {
+                            const flatten = (tasks, sectionName) => tasks.map(t => ({
+                                id: t.id || `${sectionName}-${Math.random().toString(36).substr(2, 9)}`,
+                                title: t.text,
+                                status: t.status || (sectionName === 'inProgress' ? 'in-progress' : sectionName === 'backlog' ? 'todo' : sectionName === 'blocked' ? 'blocked' : 'done'),
+                                agent: t.assignee,
+                                priority: 'medium',
+                                section: sectionName
+                            }));
+                            const allTasks = [
+                                ...flatten(todoData.inProgress, 'inProgress'),
+                                ...flatten(todoData.blocked, 'blocked'),
+                                ...flatten(todoData.completed, 'completed'),
+                                ...flatten(todoData.backlog, 'backlog')
+                            ];
+                            allTasks.forEach(task => {
+                                items.push(projectTaskToRoadmapItem(task, folder, todoPath));
+                            });
+                        }
+                    } catch (e) {
+                        console.warn(`Failed to parse project ${folder} todo:`, e);
+                    }
+                }
+            }
+        }
+
+        // Dedupe by title + project
+        const seen = new Set();
+        const deduped = items.filter(item => {
+            const key = `${item.title.toLowerCase()}|${item.project.toLowerCase()}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+
+        res.json({ items: deduped });
+    } catch (e) {
+        console.error('Error aggregating roadmap items:', e);
+        res.status(500).json({ error: 'Failed to aggregate roadmap items' });
+    }
+});
+
+// File watcher for todo changes
+const PROJECTS_DIR = path.join(PI_ROOT, 'projects');
+
+try {
+    const watcher = chokidar.watch([TODO_DASHBOARD_FILE], {
+        ignored: /node_modules|\.git/,
+        persistent: true
+    });
+    watcher.on('change', () => {
+        console.log('Main todo changed, notifying roadmap clients');
+        roadmapSSEClients.forEach(client => {
+            try {
+                client.write(`event: roadmap-update\ndata: roadmap-update\n\n`);
+            } catch (e) {
+                roadmapSSEClients.delete(client);
+            }
+        });
+    });
+} catch (e) {
+    console.error('Failed to set up watcher for main todo:', e);
+}
+
+try {
+    const projectWatcher = chokidar.watch(path.join(PROJECTS_DIR, '**/todo.md'), {
+        ignored: /node_modules|\.git/,
+        persistent: true
+    });
+    projectWatcher.on('change', (filePath) => {
+        console.log(`Project todo changed: ${filePath}, notifying roadmap clients`);
+        roadmapSSEClients.forEach(client => {
+            try {
+                client.write(`event: roadmap-update\ndata: roadmap-update\n\n`);
+            } catch (e) {
+                roadmapSSEClients.delete(client);
+            }
+        });
+    });
+} catch (e) {
+    console.error('Failed to set up watcher for project todos:', e);
+}
+
 // Health check
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', services: runningProcesses.size });
 });
 
-app.listen(PORT, () => {
+// Create HTTP server (needed for WebSocket upgrade handling)
+const server = http.createServer(app);
+
+// WebSocket proxy: upgrade /api/pi/genai/ws to ComfyUI WebSocket
+server.on('upgrade', (req, socket, head) => {
+    const url = new URL(req.url, `http://localhost:${PORT}`);
+    if (!url.pathname.startsWith('/api/pi/genai/ws')) {
+        socket.destroy();
+        return;
+    }
+
+    const clientId = url.searchParams.get('clientId') || 'dashboard';
+
+    try {
+        const comfySocket = new net.Socket();
+        // Parse the ComfyUI host and port
+        const comfyUrlParsed = new URL(COMFYUI_URL);
+        const comfyHost = comfyUrlParsed.hostname;
+        const comfyPort = parseInt(comfyUrlParsed.port) || 8188;
+
+        // Build the WebSocket upgrade request manually
+        const wsKey = crypto.randomBytes(16).toString('base64');
+        const upgradeRequest = [
+            `GET /ws?clientId=${clientId} HTTP/1.1`,
+            `Host: ${comfyHost}:${comfyPort}`,
+            `Upgrade: websocket`,
+            `Connection: Upgrade`,
+            `Sec-WebSocket-Key: ${wsKey}`,
+            `Sec-WebSocket-Version: 13`,
+            '',
+            ''
+        ].join('\r\n');
+
+        comfySocket.connect(comfyPort, comfyHost, () => {
+            comfySocket.write(upgradeRequest);
+        });
+
+        let handshakeCompleted = false;
+        let buffer = Buffer.alloc(0);
+
+        comfySocket.on('data', (data) => {
+            if (!handshakeCompleted) {
+                buffer = Buffer.concat([buffer, data]);
+                const headerEnd = buffer.indexOf('\r\n\r\n');
+                if (headerEnd !== -1) {
+                    handshakeCompleted = true;
+                    // Forward the upgrade response to the client
+                    const response = buffer.slice(0, headerEnd + 4);
+                    socket.write(response);
+                    // Forward any remaining data
+                    const remaining = buffer.slice(headerEnd + 4);
+                    if (remaining.length > 0) socket.write(remaining);
+                    // Now pipe bidirectionally
+                    comfySocket.pipe(socket);
+                    socket.pipe(comfySocket);
+                }
+            }
+        });
+
+        comfySocket.on('error', (err) => {
+            console.error('[GenAI WS] ComfyUI connection error:', err.message);
+            socket.destroy();
+        });
+
+        socket.on('error', (err) => {
+            comfySocket.destroy();
+        });
+
+        comfySocket.on('close', () => socket.destroy());
+        socket.on('close', () => comfySocket.destroy());
+
+    } catch (e) {
+        console.error('[GenAI WS] Proxy error:', e.message);
+        socket.destroy();
+    }
+});
+
+server.listen(PORT, () => {
     console.log(`
 ╔══════════════════════════════════════════════════════════╗
 ║                                                          ║
@@ -2312,6 +3516,7 @@ app.listen(PORT, () => {
 ║                                                          ║
 ║   Running on http://localhost:${PORT}                       ║
 ║   Ready to manage your services...                       ║
+║   ComfyUI proxy: ${COMFYUI_URL.padEnd(37)}║
 ║                                                          ║
 ╚══════════════════════════════════════════════════════════╝
 `);

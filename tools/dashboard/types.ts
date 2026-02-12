@@ -84,11 +84,13 @@ export interface AppItem {
   command?: string; // e.g., "npm run dev"
   directory?: string; // e.g., "D:\AI Programs\comfyui_app"
   isOnline?: boolean;
+  isManaged?: boolean; // True if dashboard started this service
   isEmbedded?: boolean; // Whether to open inside launcher iframe
   embeddedUrl?: string; // URL for embedded iframe view
   appType?: 'web' | 'electron' | 'terminal' | 'url'; // Type of application - 'url' is for external websites
   batPath?: string; // Location of the .bat file
   port?: string; // Port to run the embedding on
+  portOpen?: boolean; // Detect if port is already in use (indicates server running externally)
   // Todo integration
   todoData?: TodoData;
   hasTodo?: boolean;

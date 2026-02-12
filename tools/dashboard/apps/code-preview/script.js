@@ -31,8 +31,10 @@ async function saveSnippetsToFile() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(snippets)
         });
-        
+
         if (response.ok) {
+            // Refresh from server to get any server-side changes (deduplication, timestamps)
+            await refreshSnippets(false);
             alert('Snippets saved to saved/graphite_snippets.json');
         } else {
             alert('Failed to save snippets');
@@ -47,6 +49,7 @@ async function loadSnippetsFromFile() {
         const response = await fetch('/api/snippets');
         if (response.ok) {
             const loadedSnippets = await response.json();
+            console.log('Loaded snippets from API:', loadedSnippets.length);
             snippets = loadedSnippets;
             localStorage.setItem('graphite_snippets', JSON.stringify(snippets));
             renderSnippetList();
@@ -64,14 +67,50 @@ async function loadSnippetsFromFile() {
     }
 }
 
-// Initial Loading from localStorage
-function initStorage() {
-    const local = localStorage.getItem('graphite_snippets');
-    if (local) {
-        try {
-            snippets = JSON.parse(local);
-        } catch (e) {
-            console.error('Failed to parse localStorage data');
+// Refresh snippets from server (used to sync after external changes)
+async function refreshSnippets(showAlert = false) {
+    try {
+        const response = await fetch('/api/snippets');
+        if (response.ok) {
+            const serverSnippets = await response.json();
+            const oldLength = snippets.length;
+            snippets = serverSnippets;
+            localStorage.setItem('graphite_snippets', JSON.stringify(snippets));
+            renderSnippetList();
+            if (showAlert && serverSnippets.length !== oldLength) {
+                alert(`Snippet library refreshed: ${serverSnippets.length} snippets (was ${oldLength})`);
+            }
+        }
+    } catch (error) {
+        console.error('Failed to refresh snippets:', error);
+    }
+}
+
+// Initial Loading from server (with localStorage fallback)
+async function initStorage() {
+    try {
+        // Try to load from server first
+        const response = await fetch('/api/snippets');
+        if (response.ok) {
+            const serverSnippets = await response.json();
+            snippets = serverSnippets;
+            localStorage.setItem('graphite_snippets', JSON.stringify(snippets));
+            console.log('Loaded snippets from server:', snippets.length);
+        } else {
+            throw new Error('Server load failed');
+        }
+    } catch (error) {
+        console.warn('Failed to load from server, falling back to localStorage:', error);
+        const local = localStorage.getItem('graphite_snippets');
+        if (local) {
+            try {
+                snippets = JSON.parse(local);
+                console.log('Loaded snippets from localStorage:', snippets.length);
+            } catch (e) {
+                console.error('Failed to parse localStorage data');
+                snippets = [];
+            }
+        } else {
             snippets = [];
         }
     }
@@ -184,6 +223,7 @@ function clearEditors() {
 
 // Rendering
 function renderSnippetList() {
+    console.log('renderSnippetList called with', snippets.length, 'snippets');
     snippetList.innerHTML = '';
     repoCount.textContent = `OBJECTS: ${snippets.length}`;
 

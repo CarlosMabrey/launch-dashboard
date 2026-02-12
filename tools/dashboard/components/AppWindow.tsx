@@ -17,7 +17,7 @@ interface AppWindowProps {
   onDelete?: (id: string) => void;
   onToggleService?: () => void;
   onEdit?: () => void;
-  isSidebarVisible?: boolean;
+  sidebarWidth?: number;
 }
 
 type ImageSize = '1K' | '2K' | '4K';
@@ -104,7 +104,7 @@ const removeImageBackground = (base64: string): Promise<string> => {
   });
 };
 
-const AppWindow: React.FC<AppWindowProps> = ({ app, isNew = false, isEdit = false, startInFullscreen = false, onClose, onCreate, onUpdate, onDelete, onToggleService, onEdit, isSidebarVisible = false }) => {
+const AppWindow: React.FC<AppWindowProps> = ({ app, isNew = false, isEdit = false, startInFullscreen = false, onClose, onCreate, onUpdate, onDelete, onToggleService, onEdit, sidebarWidth = 0 }) => {
   const [isVisible, setIsVisible] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
@@ -296,10 +296,9 @@ const AppWindow: React.FC<AppWindowProps> = ({ app, isNew = false, isEdit = fals
       if (rect.width === 0 || rect.height === 0) return;
 
       // Reserve 8px trigger zone for sidebar activation when not visible
-      // Use full sidebar width (56px) when sidebar is visible
+      // Use actual sidebar width when sidebar is visible (56 = icons only, 340 = chat expanded)
       const triggerZone = 8;
-      const sidebarWidth = 56;
-      const xOffset = isSidebarVisible ? sidebarWidth : (isFullscreen ? triggerZone : 0);
+      const xOffset = (sidebarWidth && sidebarWidth > 0) ? sidebarWidth : (isFullscreen ? triggerZone : 0);
 
       const currentBounds = {
         x: Math.round(rect.x + xOffset),
@@ -318,7 +317,7 @@ const AppWindow: React.FC<AppWindowProps> = ({ app, isNew = false, isEdit = fals
         lastBoundsRef.current = currentBounds;
       }
     }
-  }, [isVisible, isMinimizing, isSidebarVisible, isFullscreen]);
+  }, [isVisible, isMinimizing, sidebarWidth, isFullscreen]);
 
   // Trigger update when properties that affect bounds change
   useEffect(() => {
@@ -360,8 +359,7 @@ const AppWindow: React.FC<AppWindowProps> = ({ app, isNew = false, isEdit = fals
       hasViewStarted = true;
 
       const triggerZone = 8;
-      const sidebarWidth = 56;
-      const xOffset = isSidebarVisible ? sidebarWidth : (isFullscreen ? triggerZone : 0);
+      const xOffset = (sidebarWidth && sidebarWidth > 0) ? sidebarWidth : (isFullscreen ? triggerZone : 0);
 
       const initialBounds = {
         x: Math.round(rect.x + xOffset),
@@ -370,6 +368,7 @@ const AppWindow: React.FC<AppWindowProps> = ({ app, isNew = false, isEdit = fals
         height: Math.round(rect.height)
       };
 
+      console.log(`[AppWindow] Creating BrowserView for ${app.name} at ${browserViewUrl}`, { bounds: initialBounds, app });
       // Call createBrowserView (handles re-attachment in main process)
       await electronAPI.createBrowserView({
         url: browserViewUrl,
@@ -409,7 +408,7 @@ const AppWindow: React.FC<AppWindowProps> = ({ app, isNew = false, isEdit = fals
         electronAPI.hideBrowserView();
       }
     };
-  }, [isVisible, isMinimizing, browserViewUrl, app.isEmbedded, app.isOnline, app.appType, isSidebarVisible, isFullscreen, updateBounds]);
+  }, [isVisible, isMinimizing, browserViewUrl, app.isEmbedded, app.isOnline, app.appType, sidebarWidth, isFullscreen, updateBounds]);
 
   // Clean up BrowserView if URL changes or service stops (but not for URL-type apps)
   useEffect(() => {

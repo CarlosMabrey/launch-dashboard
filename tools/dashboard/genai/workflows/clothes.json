@@ -1,0 +1,159 @@
+{
+    "1": {
+        "inputs": {
+            "images": [
+                "2",
+                0
+            ],
+            "Hat": true,
+            "Hair": false,
+            "Face": false,
+            "Sunglasses": false,
+            "Upper-clothes": true,
+            "Skirt": true,
+            "Dress": true,
+            "Belt": true,
+            "Pants": true,
+            "Left-arm": false,
+            "Right-arm": false,
+            "Left-leg": false,
+            "Right-leg": false,
+            "Bag": false,
+            "Scarf": false,
+            "Left-shoe": false,
+            "Right-shoe": false,
+            "Background": false,
+            "process_res": 512,
+            "mask_blur": 0,
+            "mask_offset": 0,
+            "invert_output": false,
+            "background": "Alpha",
+            "background_color": "#000000"
+        },
+        "class_type": "ClothesSegment"
+    },
+    "2": {
+        "inputs": {
+            "image": "{{IMAGE_NAME}}"
+        },
+        "class_type": "LoadImage"
+    },
+    "3": {
+        "inputs": {
+            "pixels": [
+                "10",
+                0
+            ],
+            "vae": [
+                "5",
+                2
+            ],
+            "mask": [
+                "10",
+                1
+            ],
+            "grow_mask_by": 6
+        },
+        "class_type": "VAEEncodeForInpaint"
+    },
+    "5": {
+        "inputs": {
+            "ckpt_name": "realisticVisionV60B1_v51HyperInpaintVAE.safetensors"
+        },
+        "class_type": "CheckpointLoaderSimple"
+    },
+    "6": {
+        "inputs": {
+            "text": "{{POSITIVE_PROMPT}}",
+            "clip": [
+                "5",
+                1
+            ]
+        },
+        "class_type": "CLIPTextEncode"
+    },
+    "7": {
+        "inputs": {
+            "text": "{{NEGATIVE_PROMPT}}",
+            "clip": [
+                "5",
+                1
+            ]
+        },
+        "class_type": "CLIPTextEncode"
+    },
+    "8": {
+        "inputs": {
+            "samples": [
+                "12",
+                0
+            ],
+            "vae": [
+                "5",
+                2
+            ]
+        },
+        "class_type": "VAEDecode"
+    },
+    "9": {
+        "inputs": {
+            "images": [
+                "8",
+                0
+            ]
+        },
+        "class_type": "PreviewImage"
+    },
+    "10": {
+        "inputs": {
+            "image": [
+                "2",
+                0
+            ],
+            "mask": [
+                "1",
+                1
+            ],
+            "drawing_version": "init",
+            "crop_left": 0,
+            "crop_right": 0,
+            "crop_top": 0,
+            "crop_bottom": 0,
+            "crop_width": 512,
+            "crop_height": 512,
+            "last_width": 512,
+            "last_height": 512,
+            "snapValue": "none",
+            "aspectRatioString": "1:1",
+            "aspectLockEnabled": false
+        },
+        "class_type": "OlmDragCrop"
+    },
+    "12": {
+        "inputs": {
+            "seed": "{{SEED}}",
+            "steps": 6,
+            "cfg": 2,
+            "sampler_name": "dpmpp_sde",
+            "scheduler": "karras",
+            "denoise": 1,
+            "model": [
+                "5",
+                0
+            ],
+            "positive": [
+                "6",
+                0
+            ],
+            "negative": [
+                "7",
+                0
+            ],
+            "latent_image": [
+                "3",
+                0
+            ]
+        },
+        "class_type": "KSampler"
+    }
+}

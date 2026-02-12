@@ -12,6 +12,7 @@ import {
   getProjects, Project, getAgentTypes, AgentType, updateAppMetadata, getRunningServices,
   deleteAppFromRegistry
 } from './services/piService';
+import { getGenAIHistory, getGenAIOutputUrl } from './services/genaiService';
 import { useInterval } from './hooks/useLocalStorage';
 import AppWindow from './components/AppWindow';
 import EmbeddedAppSidebar from './components/EmbeddedAppSidebar';
@@ -19,7 +20,9 @@ import AuraSettings from './components/AuraSettings';
 import LiquidBackground from './components/LiquidBackground';
 import TodoBoardKanban from './components/TodoBoardKanban';
 import VoiceAssistantCell from './components/VoiceAssistantCell';
+import ResourceMonitor from './components/ResourceMonitor';
 import AgentRosterCell from './components/AgentRosterCell';
+import GenAICell from './components/GenAICell';
 import BackgroundMode from './components/BackgroundMode';
 // Core Grid Components
 import { SentimentScryerCell } from './components/SentimentScryerCell';
@@ -30,13 +33,16 @@ import TemporalFluxCell from './components/TemporalFluxCell';
 import CommandPalette from './components/CommandPalette';
 import ContextMenu from './components/ContextMenu';
 import TitleBar from './components/TitleBar';
+import RoadmapPage from './components/RoadmapPage';
+import RoadmapHeader from './components/RoadmapHeader';
+
 
 // ════════════════════════════════════════════════════════════════════════════════
 // DESIGN TOKENS
 // ════════════════════════════════════════════════════════════════════════════════
-const GLASS = 'bg-white/5 backdrop-blur-xl border border-white/10';
-const GLASS_HOVER = 'hover:bg-white/10 hover:border-white/20';
-const ACCENT = {
+export const GLASS = 'bg-white/5 backdrop-blur-xl border border-white/10';
+export const GLASS_HOVER = 'hover:bg-white/10 hover:border-white/20';
+export const ACCENT = {
   emerald: 'from-emerald-500/20 to-emerald-600/5',
   blue: 'from-sky-500/20 to-sky-600/5',
   red: 'from-rose-500/20 to-rose-600/5',
@@ -55,7 +61,7 @@ const App: React.FC = () => {
   const [isEditMode, setIsEditMode] = useState(false);
   const [startInFullscreen, setStartInFullscreen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [activeView, setActiveView] = useState<'discover' | 'agents' | 'logs'>('discover');
+  const [activeView, setActiveView] = useState<'discover' | 'genai' | 'agents' | 'logs' | 'roadmap'>('discover');
   const [chatInputValue, setChatInputValue] = useState('');
   const [selectedAgent, setSelectedAgent] = useState<string>('pi');
   const [availableAgents, setAvailableAgents] = useState<AgentType[]>([]);
@@ -63,6 +69,7 @@ const App: React.FC = () => {
   // Cell data
   const [piMessages, setPiMessages] = useState<PiMessage[]>([]);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [genAIHistory, setGenAIHistory] = useState<Array<{ id: string, url: string, isVideo: boolean, time: number }>>([]);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [weather, setWeather] = useState<MarketWeather>({ vibe: 'Initializing...', trend: 'neutral', lastUpdated: Date.now() });
   const [vanFund, setVanFund] = useState<VanFundData>({ current: 0, target: 50000, contributions: [] });
@@ -71,6 +78,7 @@ const App: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [sidebarsCollapsed, setSidebarsCollapsed] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(0);
 
   // ─── Data Fetching ─────────────────────────────────────────────────────────────
   const fetchAllNonChatData = useCallback(async () => {
@@ -107,12 +115,15 @@ const App: React.FC = () => {
           return false;
         });
 
-        // Server apps with running-service status overlaid
+        // Server apps with running-service status AND port detection overlaid
         const serverApps = grimoire.map(app => {
-          const isOnline = runningIds.has(app.id);
+          const isRunning = runningIds.has(app.id);
+          const isPortOpen = app.portOpen || false;
+          const isOnline = isRunning || isPortOpen;
           return {
             ...app,
             isOnline,
+            isManaged: isRunning, // Track whether dashboard controls this service
             status: (isOnline ? 'active' : 'idle') as Status
           };
         });
@@ -139,6 +150,43 @@ const App: React.FC = () => {
     }));
   }, [apps.length]);
 
+  const fetchGenAIImages = useCallback(async () => {
+    try {
+      const history = await getGenAIHistory();
+      const sortedPrompts = Object.entries(history).sort((a: any, b: any) =>
+        (b[1].prompt?.[0] || 0) - (a[1].prompt?.[0] || 0)
+      );
+
+      const results: Array<{ id: string, url: string, isVideo: boolean, time: number }> = [];
+      // Assign synthetic timestamps based on order relative to "now" to keep them relevant in the feed
+      // usage of prompt[0] as timestamp is unreliable in all environments
+      const baseTime = Date.now();
+
+      sortedPrompts.slice(0, 10).forEach(([id, data], idx) => {
+        const promptData = data as any;
+        if (!promptData?.outputs) return;
+
+        for (const nodeOutput of Object.values(promptData.outputs)) {
+          const no = nodeOutput as any;
+          const outs = [...(no?.images || []), ...(no?.gifs || [])];
+          for (const out of outs) {
+            const isVid = out.filename?.match(/\.(mp4|webm|mov|gif)$/i);
+            const url = getGenAIOutputUrl(out.filename, out.type, out.subfolder);
+            results.push({
+              id: `${id}-${out.filename}`,
+              url,
+              isVideo: !!isVid,
+              time: baseTime - (idx * 60000) // Deduct 1 minute per older item to stagger them
+            });
+          }
+        }
+      });
+      setGenAIHistory(results);
+    } catch (e) {
+      // Silent fail (service might be offline)
+    }
+  }, []);
+
   const fetchChatHistory = useCallback(async () => {
     const chat = await getChatHistory(selectedAgent);
     setChatHistory(chat);
@@ -162,6 +210,7 @@ const App: React.FC = () => {
   useEffect(() => { fetchAgents(); }, [fetchAgents]);
   useInterval(fetchAllNonChatData, 10000);
   useInterval(fetchTodos, 5000);
+  useInterval(fetchGenAIImages, 5000);
 
   // ─── Keyboard Shortcuts ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -206,11 +255,14 @@ const App: React.FC = () => {
       return;
     }
 
-    const willBeOnline = !app.isOnline;
-    if (willBeOnline && app.command) {
+    const isOffline = !app.isOnline;
+    const isManaged = app.isManaged;
+
+    if (isOffline && app.command) {
+      // App is offline; start the service
       const success = await startService(app.id, app.command, app.directory, app.badge);
       if (success) {
-        const updatedApp = { ...app, isOnline: true, status: 'active' as Status };
+        const updatedApp = { ...app, isOnline: true, isManaged: true, status: 'active' as Status };
         setApps(prev => prev.map(a => a.id === app.id ? updatedApp : a));
 
         // If embedded, open in fullscreen
@@ -220,10 +272,20 @@ const App: React.FC = () => {
           setStartInFullscreen(true);
         }
       }
-    } else if (app.isOnline) {
+    } else if (isManaged && app.isOnline) {
+      // App is online AND managed by dashboard → stop it
       await stopService(app.id);
-      setApps(prev => prev.map(a => a.id === app.id ? { ...a, isOnline: false, status: 'idle' as Status } : a));
+      setApps(prev => prev.map(a => a.id === app.id ? { ...a, isOnline: false, isManaged: false, status: 'idle' as Status } : a));
+    } else if (app.isOnline && !isManaged) {
+      // App is online but NOT managed (external process detected via port).
+      // Just open/connect to it without trying to stop the external server.
+      if (app.isEmbedded) {
+        setSelectedApp(app);
+        setIsEditMode(false);
+        setStartInFullscreen(true);
+      }
     }
+    // If app is not embedded and not managed, we could also consider launching externally, but default behavior is fine.
   }, [setApps]);
 
   const handleDeleteApp = useCallback(async (id: string) => {
@@ -379,6 +441,18 @@ const App: React.FC = () => {
                   <span className="text-[10px] uppercase tracking-tighter">Agents</span>
                 </a>
               </li>
+              <li className={`nav-item-glass mb-2 ${activeView === 'genai' ? 'active' : 'opacity-40 hover:opacity-100'}`} onClick={() => setActiveView('genai')}>
+                <a href="#" className="flex flex-col items-center gap-1">
+                  <span className="text-lg">🎨</span>
+                  <span className="text-[10px] uppercase tracking-tighter">GenAI</span>
+                </a>
+              </li>
+              <li className={`nav-item-glass mb-2 ${activeView === 'roadmap' ? 'active' : 'opacity-40 hover:opacity-100'}`} onClick={() => setActiveView('roadmap')}>
+                <a href="#" className="flex flex-col items-center gap-1">
+                  <span className="text-lg">🗺️</span>
+                  <span className="text-[10px] uppercase tracking-tighter">Roadmap</span>
+                </a>
+              </li>
               <li className={`nav-item-glass mb-2 ${activeView === 'logs' ? 'active' : 'opacity-40 hover:opacity-100'}`} onClick={() => setActiveView('logs')}>
                 <a href="#" className="flex flex-col items-center gap-1">
                   <i className="fa fa-compact-disc text-lg"></i>
@@ -501,67 +575,75 @@ const App: React.FC = () => {
                 <AgentRosterCell />
               </div>
             )}
+            {/* VIEW: GENAI */}
+            {activeView === 'genai' && (
+              <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 min-h-full flex flex-col">
+                {/* @ts-ignore */}
+                <GenAICell />
+              </div>
+            )}
+            {/* VIEW: ROADMAP */}
+            {activeView === 'roadmap' && (
+              <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 min-h-full flex flex-col">
+                <RoadmapPage />
+              </div>
+            )}
           </div>
 
           {/* RIGHT CONTENT */}
           <div className={`border-l border-white/20 p-8 flex flex-col transition-all duration-500 ${sidebarsCollapsed ? 'opacity-0 p-0 overflow-hidden border-l-0' : 'opacity-100'}`}>
 
             {/* Recent Heartbeats (Recommended Songs Area) */}
-            <div className="flex-1">
+            <div className="flex-1 overflow-y-auto min-h-0 mb-6">
               <h2 className="text-sm font-semibold uppercase tracking-widest text-white/50 mb-6">Aether Feedback</h2>
               <div className="space-y-4">
-                {chatHistory.slice(-6).map((msg, idx) => (
-                  <div key={msg.id} className="flex items-center gap-4 group">
-                    <div className="w-10 h-10 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-sm">
-                      {msg.role === 'user' ? '👤' : '🧙‍♂️'}
-                    </div>
-                    <div className="flex-1 overflow-hidden">
-                      <p className="text-xs text-white font-medium truncate">{msg.text}</p>
-                      <p className="text-[10px] text-white/30 uppercase">{new Date(msg.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                    </div>
-                  </div>
-                ))}
+                <div className="space-y-4">
+                  {(() => {
+                    const chatItems = chatHistory.map(m => ({ ...m, type: 'chat', sortTime: m.time, url: '' }));
+                    const genItems = genAIHistory.map(g => ({
+                      id: g.id,
+                      type: 'genai',
+                      text: g.isVideo ? 'Generated Video' : 'Generated Image',
+                      role: 'assistant',
+                      time: g.time,
+                      sortTime: g.time,
+                      url: g.url
+                    }));
+
+                    const combined = [...chatItems, ...genItems]
+                      .sort((a, b) => b.sortTime - a.sortTime)
+                      .slice(0, 8);
+
+                    return combined.map((msg) => (
+                      <div key={msg.id} className="flex items-center gap-4 group">
+                        <div className={`w-10 h-10 rounded-lg border flex items-center justify-center text-sm shrink-0 overflow-hidden ${msg.type === 'genai' ? 'bg-purple-500/10 border-purple-500/20' : 'bg-white/5 border-white/10'}`}>
+                          {msg.type === 'genai' ? (
+                            msg.url ? <img src={msg.url} className="w-full h-full object-cover" alt="GenAI" /> : '🎨'
+                          ) : (
+                            msg.role === 'user' ? '👤' : '🧙‍♂️'
+                          )}
+                        </div>
+                        <div className="flex-1 overflow-hidden">
+                          <p className={`text-xs font-medium truncate ${msg.type === 'genai' ? 'text-purple-300' : 'text-white'}`}>
+                            {msg.text}
+                          </p>
+                          <p className="text-[10px] text-white/30 uppercase">
+                            {new Date(msg.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {msg.type === 'genai' && ' • AI Artifact'}
+                          </p>
+                        </div>
+                      </div>
+                    ));
+                  })()}
+                </div>
               </div>
             </div>
 
             {/* AI Heartbeat (Music Player Area) */}
-            <div className="music-player-glass border border-white/20 ritual-pulse">
-              <div className="relative mb-6">
-                <div className="w-32 h-32 rounded-full border-4 border-white/10 p-1 flex items-center justify-center bg-white/5 group relative">
-                  <div className="absolute inset-0 rounded-full bg-indigo-500/20 animate-ping"></div>
-                  <div className="w-full h-full rounded-full border-2 border-white/40 flex items-center justify-center relative z-10 overflow-hidden">
-                    <span className="text-5xl">🔮</span>
-                  </div>
-                </div>
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 bg-[#11063a]/70 border-2 border-white rounded-full z-20"></div>
-              </div>
-
-              <h2 className="text-lg font-bold text-white mb-1">Pi Status</h2>
-              <p className="text-xs text-white/40 uppercase tracking-[0.2em] mb-6">
-                Linked: {availableAgents.find(a => a.id === selectedAgent)?.name || selectedAgent}
-              </p>
-
-              <div className="w-full px-4 mb-4">
-                <div className="h-1 bg-white/10 rounded-full overflow-hidden">
-                  <div className="h-full bg-indigo-400 animate-[loading_2s_ease-in-out_infinite]" style={{ width: '40%' }}></div>
-                </div>
-              </div>
-
-              <div className="flex gap-4">
-                <button className="w-10 h-10 rounded-full bg-white/10 border border-white/10 flex items-center justify-center hover:scale-95 transition-all">
-                  <i className="fa fa-backward text-xs"></i>
-                </button>
-                <button className="w-12 h-12 rounded-full bg-white/20 border border-white/20 flex items-center justify-center hover:scale-95 transition-all text-white">
-                  <i className={`fa ${isChatLoading ? 'fa-spinner animate-spin' : 'fa-play'} text-lg`}></i>
-                </button>
-                <button className="w-10 h-10 rounded-full bg-white/10 border border-white/10 flex items-center justify-center hover:scale-95 transition-all">
-                  <i className="fa fa-forward text-xs"></i>
-                </button>
-              </div>
-            </div>
+            {/* AI Resource Monitor - Stickied to bottom */}
+            <ResourceMonitor apps={apps} className="flex-shrink-0" />
 
           </div>
-
         </section>
       </main>
 
@@ -713,7 +795,7 @@ const App: React.FC = () => {
           isNew={selectedApp.id === 'new'}
           isEdit={isEditMode}
           startInFullscreen={startInFullscreen}
-          isSidebarVisible={isSidebarCollapsed}
+          sidebarWidth={sidebarWidth}
           onClose={handleCloseWindow}
           onCreate={handleCreateApp}
           onUpdate={handleUpdateApp}
@@ -723,7 +805,7 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* Embedded App Sidebar */}
+      {/* Embedded App Sidebar (with integrated Pi Chat) */}
       <EmbeddedAppSidebar
         apps={apps}
         selectedAppId={selectedApp?.id}
@@ -733,7 +815,14 @@ const App: React.FC = () => {
           setStartInFullscreen(true);
         }}
         onGoToDashboard={handleCloseWindow}
-        onVisibilityChange={setIsSidebarCollapsed}
+        onVisibilityChange={setSidebarWidth}
+        chatHistory={chatHistory}
+        isChatLoading={isChatLoading}
+        selectedAgent={selectedAgent}
+        availableAgents={availableAgents}
+        onSendMessage={handleSendChatMessage}
+        onClearChat={handleClearChat}
+        onAgentChange={setSelectedAgent}
       />
     </div>
   );

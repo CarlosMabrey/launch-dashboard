@@ -1,0 +1,18 @@
+{
+  "name": "chronos-glyph",
+  "version": "1.0.0",
+  "description": "A magical calendar application with holographic UI",
+  "main": "app.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js 5174"
+  },
+  "keywords": [
+    "calendar",
+    "holographic",
+    "magical",
+    "ui"
+  ],
+  "author": "Pi (Carlos's Wizard)",
+  "license": "MIT"
+}

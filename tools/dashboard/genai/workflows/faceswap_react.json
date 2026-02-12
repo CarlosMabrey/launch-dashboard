@@ -1,0 +1,95 @@
+{
+    "1": {
+        "inputs": {
+            "image": "{{TARGET_IMAGE}}"
+        },
+        "class_type": "LoadImage"
+    },
+    "2": {
+        "inputs": {
+            "image": "{{SOURCE_IMAGE}}"
+        },
+        "class_type": "LoadImage"
+    },
+    "3": {
+        "inputs": {
+            "upscale_method": "nearest-exact",
+            "width": 512,
+            "height": 512,
+            "crop": "disabled",
+            "image": [
+                "2",
+                0
+            ]
+        },
+        "class_type": "ImageScale"
+    },
+    "4": {
+        "inputs": {
+            "enabled": "{{FACE_BOOST_ENABLED}}",
+            "boost_model": "GPEN-BFR-2048.onnx",
+            "interpolation": "Bicubic",
+            "visibility": 1,
+            "codeformer_weight": 0.5,
+            "restore_with_main_after": false
+        },
+        "class_type": "ReActorFaceBoost"
+    },
+    "5": {
+        "inputs": {
+            "enabled": true,
+            "swap_model": "inswapper_128.onnx",
+            "facedetection": "retinaface_mobile0.25",
+            "face_restore_model": "GFPGANv1.3.pth",
+            "face_restore_visibility": 1,
+            "codeformer_weight": 0.5,
+            "detect_gender_input": "no",
+            "detect_gender_source": "no",
+            "input_faces_index": "0",
+            "source_faces_index": "0",
+            "console_log_level": 1,
+            "input_image": [
+                "1",
+                0
+            ],
+            "source_image": [
+                "3",
+                0
+            ],
+            "face_boost": [
+                "4",
+                0
+            ]
+        },
+        "class_type": "ReActorFaceSwap"
+    },
+    "6": {
+        "inputs": {
+            "model_name": "4x_NMKD-Siax_200k.pth"
+        },
+        "class_type": "UpscaleModelLoader"
+    },
+    "7": {
+        "inputs": {
+            "upscale_model": [
+                "6",
+                0
+            ],
+            "image": [
+                "5",
+                0
+            ]
+        },
+        "class_type": "ImageUpscaleWithModel"
+    },
+    "8": {
+        "inputs": {
+            "filename_prefix": "FaceSwap",
+            "images": [
+                "7",
+                0
+            ]
+        },
+        "class_type": "SaveImage"
+    }
+}
