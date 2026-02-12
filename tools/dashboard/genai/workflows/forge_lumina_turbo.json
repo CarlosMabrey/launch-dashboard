@@ -59,7 +59,7 @@
                 "key": "SCHEDULER",
                 "label": "Scheduler",
                 "type": "SCHEDULER",
-                "default": "SGM Uniform"
+                "default": "sgm_uniform"
             },
             {
                 "key": "MODEL",
