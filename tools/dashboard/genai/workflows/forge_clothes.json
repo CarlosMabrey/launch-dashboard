@@ -1,0 +1,99 @@
+{
+  "__ui": {
+    "inputs": [
+      {
+        "key": "IMAGE_NAME",
+        "label": "Input Image",
+        "type": "IMAGE",
+        "default": ""
+      },
+      {
+        "key": "POSITIVE_PROMPT",
+        "label": "Positive Prompt",
+        "type": "PROMPT",
+        "default": "high quality, detailed, professional photograph"
+      },
+      {
+        "key": "NEGATIVE_PROMPT",
+        "label": "Negative Prompt",
+        "type": "PROMPT",
+        "default": "blurry, low quality, distorted, bad anatomy"
+      },
+      {
+        "key": "WIDTH",
+        "label": "Width",
+        "type": "NUMBER",
+        "default": 512
+      },
+      {
+        "key": "HEIGHT",
+        "label": "Height",
+        "type": "NUMBER",
+        "default": 512
+      },
+      {
+        "key": "STEPS",
+        "label": "Steps",
+        "type": "NUMBER",
+        "default": 20
+      },
+      {
+        "key": "CFG",
+        "label": "CFG Scale",
+        "type": "NUMBER",
+        "default": 7
+      },
+      {
+        "key": "SEED",
+        "label": "Seed",
+        "type": "NUMBER",
+        "default": -1
+      },
+      {
+        "key": "SAMPLER",
+        "label": "Sampler",
+        "type": "SAMPLER",
+        "default": "DPM++ 2M"
+      },
+      {
+        "key": "SCHEDULER",
+        "label": "Scheduler",
+        "type": "SCHEDULER",
+        "default": "Karras"
+      },
+      {
+        "key": "MODEL",
+        "label": "Checkpoint",
+        "type": "MODEL",
+        "default": "realisticVisionV60B1_v51HyperInpaintVAE.safetensors"
+      },
+      {
+        "key": "CLOTHES_SEGMENT",
+        "label": "Change Clothing",
+        "type": "SELECT",
+        "options": ["Upper-clothes", "Lower-clothes", "Dress", "Hat", "Shoes"],
+        "default": "Upper-clothes"
+      },
+      {
+        "key": "INPAINTING_FILL",
+        "label": "Inpainting Fill",
+        "type": "SELECT",
+        "options": ["Fill with Noise", "Fill with Original", "Fill with Latent Noise"],
+        "default": "Fill with Original"
+      },
+      {
+        "key": "INPAINT_FULL_RES",
+        "label": "Full Resolution Inpainting",
+        "type": "BOOLEAN",
+        "default": true
+      },
+      {
+        "key": "INPAINT_PADDING",
+        "label": "Inpaint Padding (pixels)",
+        "type": "NUMBER",
+        "default": 32
+      }
+    ]
+  },
+  "info": "Forge inpainting workflow for clothes changing. Uses img2img inpainting mode with mask generation."
+}

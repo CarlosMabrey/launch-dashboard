@@ -53,7 +53,7 @@
                 "key": "SAMPLER",
                 "label": "Sampler",
                 "type": "SAMPLER",
-                "default": "Res Multistep"
+                "default": "res_multistep"
             },
             {
                 "key": "SCHEDULER",
