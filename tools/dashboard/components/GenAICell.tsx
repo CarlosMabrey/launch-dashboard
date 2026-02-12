@@ -29,8 +29,15 @@ import {
 import { convertGraphToApi, parameterizeWorkflow } from '../utils/comfyConverter';
 import { GenAILoraSelector, LoraConfig } from './GenAILoraSelector';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-
-const API_BASE = 'http://localhost:3005/api/pi';
+import {
+  getWorkflowUiInputs,
+  applyTemplate,
+  processWorkflowFeatures,
+  injectLoras,
+  generateSimpleMask,
+  uploadBase64Image,
+  API_BASE
+} from './utils/workflowUtils';
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
